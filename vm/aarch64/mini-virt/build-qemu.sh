@@ -12,7 +12,7 @@ JOBS=${JOBS:-$(nproc)}
 mkdir -p "${QEMU_BUILD}"
 
 # 首次构建时执行 configure
-# 如需修改 configure-time 选项，删除对应 build 目录后重新构建
+# 如需修改 configure-time 选项，删除 qemu/build 后重新构建
 if [[ ! -f "${QEMU_BUILD}/build.ninja" ]]; then
     (
         cd "${QEMU_BUILD}"
