@@ -1,15 +1,6 @@
 # Syslab
 
 用于构建和运行最小化 QEMU virtual machine 的 System and Architecture lab。
-当前 VM 由本仓库中的 QEMU、Linux 和 BusyBox Git submodule 配套构建，并通过
-`initramfs` 启动到串口上的交互 shell。
-
-## Repository 结构
-
-- `qemu/`：QEMU Git submodule，可构建所需的 system emulator
-- `linux/`：Linux Git submodule，可构建对应 arch 的 kernel image
-- `busybox/`：BusyBox Git submodule，用于生成静态链接的 initramfs userspace
-- `vm/<arch>/<machine>/`：特定 arch 与 machine 的构建、启动脚本和说明文档
 
 首次获取 repository 后初始化 submodule：
 
@@ -17,7 +8,7 @@
 git submodule update --init --recursive
 ```
 
-## 已支持的 VM
+## Supported VMs
 
 | Arch | QEMU machine | 说明 | 入口 |
 | --- | --- | --- | --- |
@@ -25,23 +16,7 @@ git submodule update --init --recursive
 | AArch64 | `virt` | QEMU 标准 ARM `virt` machine，使用 Cortex-A72 和 QEMU 生成的 DTB | [README](vm/aarch64/virt/README.md) |
 | RISC-V 64 | `virt` | QEMU 标准 RISC-V `virt` machine，由 QEMU 生成 DTB | [README](vm/riscv64/virt/README.md) |
 
-每个 VM 目录至少提供：
-
-- `build-all.sh`：按依赖顺序构建全部组件
-- `run.sh`：启动 VM 并连接到交互终端
-- `README.md`：说明依赖、启动链、设备和生成物
-
-其余 component 构建脚本和配置由 VM build profile 按需提供
-
-## 构建和运行
-
-同一时间只保留一个 active VM build profile：
-
-- 切换 VM 时，清空 `qemu/build`、`linux/build` 和 `busybox/build`
-- 修改 QEMU 的 configure-time 选项时，只清空 `qemu/build`
-- build 目录中的 `.syslab-profile` 用于阻止不同 VM 复用彼此的生成物
-
-完整的构建与验证约定见 [AGENTS.md](AGENTS.md)
+## Build and Run
 
 以 RISC-V `virt` 为例：
 
@@ -55,5 +30,3 @@ guest 启动后进入 BusyBox shell：
 
 - 执行 `exit` 或 `poweroff` 可正常关闭 guest
 - 按 `Ctrl-a c` 进入 QEMU monitor 后输入 `q` 可退出 QEMU
-
-每个 VM 的依赖、kernel boot parameter、设备和路径说明以该目录的 `README.md` 为准。
