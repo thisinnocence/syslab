@@ -22,6 +22,7 @@ git submodule update --init --recursive
 | Arch | QEMU machine | 说明 | 入口 |
 | --- | --- | --- | --- |
 | AArch64 | `mini-virt` | 自定义的最小 ARM machine，使用配套 DTS | [README](vm/aarch64/mini-virt/README.md) |
+| AArch64 | `virt` | QEMU 标准 ARM `virt` machine，使用 Cortex-A72 和 QEMU 生成的 DTB | [README](vm/aarch64/virt/README.md) |
 | RISC-V 64 | `virt` | QEMU 标准 RISC-V `virt` machine，由 QEMU 生成 DTB | [README](vm/riscv64/virt/README.md) |
 
 每个 VM 目录至少提供：
