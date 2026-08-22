@@ -6,4 +6,4 @@
 	url = git@github.com:thisinnocence/qemu.git
 [submodule "busybox"]
 	path = busybox
-	url = git@github.com:mirror/busybox.git
+	url = git@github.com:thisinnocence/busybox.git

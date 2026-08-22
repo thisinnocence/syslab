@@ -1,0 +1,23 @@
+# 编辑器配置
+.vscode/
+
+# root 下的构建目录
+/build/
+
+# C/C++ 编译中间文件
+*.o
+*.obj
+*.d
+*.dwo
+*.dwp
+*.su
+*.gcda
+*.gcno
+*.gcov
+*.cmd
+
+# CMake 生成文件
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
