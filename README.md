@@ -33,9 +33,12 @@ git submodule update --init --recursive
 
 ## 构建和运行
 
-每次只构建一个 VM。切换 VM 或修改 QEMU 的 configure-time 选项前，清空
-`qemu/build`、`linux/build` 和 `busybox/build`。完整的构建与验证约定见
-[AGENT.md](AGENT.md)
+同一时间只保留一个 active VM build profile：
+
+- 切换 VM 时，清空 `qemu/build`、`linux/build` 和 `busybox/build`
+- 修改 QEMU 的 configure-time 选项时，只清空 `qemu/build`
+
+完整的构建与验证约定见 [AGENTS.md](AGENTS.md)
 
 以 RISC-V `virt` 为例：
 
