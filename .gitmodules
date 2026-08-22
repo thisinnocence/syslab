@@ -1,0 +1,9 @@
+[submodule "linux"]
+	path = linux
+	url = git@github.com:thisinnocence/linux.git
+[submodule "qemu"]
+	path = qemu
+	url = git@github.com:thisinnocence/qemu.git
+[submodule "busybox"]
+	path = busybox
+	url = git@github.com:mirror/busybox.git
