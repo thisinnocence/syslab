@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 
-# 管理 build 目录的 VM build profile ownership
+# =============================================================================
+# 作用：管理 build 目录的 VM build profile ownership
+#
+# 意图：防止不同 VM profile 复用彼此或旧的无归属 build output
+#
+# 实现：
+# - claim：为空目录写入 .syslab-profile marker，并声明 ownership
+# - require：检查 marker 是否存在且属于指定 profile
+# - marker 缺失、目录非空或 ownership 不匹配时拒绝继续
+# =============================================================================
+
 set -euo pipefail
 
 MODE=$1
