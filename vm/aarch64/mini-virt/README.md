@@ -23,6 +23,20 @@ sudo apt install build-essential gcc-aarch64-linux-gnu ninja-build \
 
 QEMU 仅构建无图形界面的 `aarch64-softmmu`
 
+## VM 启动约定
+
+- QEMU machine：自定义 `mini-virt`
+- CPU：machine 默认的 Cortex-A57，使用 `-smp 2` 启动两个 vCPU
+- 内存：固定使用 `-m 4G`，对应 machine 从 `0x40000000` 开始的 4 GiB RAM 映射
+- kernel：`$REPO_ROOT/linux/build/arch/arm64/boot/Image`
+- DTB：构建 `mini-virt.dtb` 并通过 `-dtb` 显式传入，描述 GICv3、architectural
+  timer、PL011 和 PSCI
+- initramfs：`$REPO_ROOT/busybox/build/initramfs.cpio.gz`
+- kernel boot parameter：
+  `console=ttyAMA0 earlycon=pl011,0x09000000 rdinit=/init panic=-1`
+- PID 1：initramfs 中的 `/init`，挂载 pseudo-filesystem 后在 `ttyAMA0` 启动
+  BusyBox shell；退出 shell 后执行 `poweroff -f`
+
 ## 构建和运行
 
 ```sh
@@ -33,7 +47,7 @@ cd vm/aarch64/mini-virt
 
 guest 会在 `ttyAMA0` 上启动交互式 BusyBox shell
 
-- 若 machine 与 kernel 支持关机，执行 `poweroff` 可正常关闭 guest
+- 执行 `exit` 或 `poweroff` 可正常关闭 guest
 - 按 `Ctrl-a c` 进入 QEMU monitor 后输入 `q` 可退出 QEMU
 
 如需单独重建某个组件，运行对应的 `build-*.sh` 脚本

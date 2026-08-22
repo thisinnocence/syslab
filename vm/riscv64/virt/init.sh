@@ -41,8 +41,11 @@ trap 'reboot -f' TERM
 trap 'poweroff -f' USR2
 trap 'halt -f' USR1
 
-# PID 1 不能返回
 # 创建 session，并将 ns16550a console 设为 controlling terminal，使交互 shell
 # 获得正常的 job control
 /usr/bin/setsid /bin/cttyhack /bin/sh &
 wait "$!"
+
+# PID 1 不能返回；用户退出交互 shell 后正常关闭 guest
+echo "Shell exited; powering off."
+poweroff -f

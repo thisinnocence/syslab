@@ -53,7 +53,7 @@ cd vm/riscv64/virt
 
 guest 启动后进入 BusyBox shell：
 
-- 若 machine 与 kernel 支持关机，执行 `poweroff` 可正常关闭 guest
+- 执行 `exit` 或 `poweroff` 可正常关闭 guest
 - 按 `Ctrl-a c` 进入 QEMU monitor 后输入 `q` 可退出 QEMU
 
 每个 VM 的依赖、kernel boot parameter、设备和路径说明以该目录的 `README.md` 为准。
