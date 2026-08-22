@@ -8,6 +8,8 @@
 ## 构建约定
 
 - 每个 submodule 的 build output 只能放在其自身的 `build/` 目录
+- 一个具体 VM 是一个 build object，独占 `qemu/build`、`linux/build` 和 `busybox/build`
+- build object 或 configure-time 选项变更时，清空这三个 build 目录后重新构建
 - 在目标 VM 目录中使用 `build-all.sh` 构建全部组件，并使用 `run.sh` 启动 QEMU
 
 ## 脚本约定
