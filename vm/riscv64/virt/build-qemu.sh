@@ -9,7 +9,7 @@ QEMU_BUILD="${QEMU_SRC}/build"
 QEMU_BIN="${QEMU_BUILD}/qemu-system-riscv64"
 JOBS=${JOBS:-$(nproc)}
 
-mkdir -p "${QEMU_BUILD}"
+"${REPO_ROOT}/vm/build-profile.sh" claim riscv64/virt "${QEMU_BUILD}"
 
 # 首次构建时执行 configure
 # 如需修改 configure-time 选项，删除 qemu/build 后重新构建

@@ -11,7 +11,7 @@ ARCH=riscv
 CROSS_COMPILE=${CROSS_COMPILE:-riscv64-linux-gnu-}
 JOBS=${JOBS:-$(nproc)}
 
-mkdir -p "${BUSYBOX_BUILD}"
+"${REPO_ROOT}/vm/build-profile.sh" claim riscv64/virt "${BUSYBOX_BUILD}"
 
 # 从不启用任何 applet 的配置开始，再应用最小 BusyBox 配置
 make -C "${BUSYBOX_SRC}" O="${BUSYBOX_BUILD}" ARCH="${ARCH}" \

@@ -11,7 +11,7 @@ ARCH=riscv
 CROSS_COMPILE=${CROSS_COMPILE:-riscv64-linux-gnu-}
 JOBS=${JOBS:-$(nproc)}
 
-mkdir -p "${LINUX_BUILD}"
+"${REPO_ROOT}/vm/build-profile.sh" claim riscv64/virt "${LINUX_BUILD}"
 
 # KCONFIG_ALLCONFIG 将指定的 symbol 作为 allnoconfig 的输入
 # olddefconfig 随后解析依赖关系，并确定性地补全新引入的 symbol

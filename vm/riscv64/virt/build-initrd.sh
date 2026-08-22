@@ -11,6 +11,9 @@ BUSYBOX_INSTALL="${BUSYBOX_BUILD}/_install"
 ROOTFS_DIR="${BUSYBOX_BUILD}/rootfs"
 INITRD_IMAGE="${BUSYBOX_BUILD}/initramfs.cpio.gz"
 
+"${REPO_ROOT}/vm/build-profile.sh" require riscv64/virt "${LINUX_BUILD}"
+"${REPO_ROOT}/vm/build-profile.sh" require riscv64/virt "${BUSYBOX_BUILD}"
+
 # ROOTFS_DIR 是由这些脚本管理的生成目录
 rm -rf -- "${ROOTFS_DIR}"
 mkdir -p "${ROOTFS_DIR}"/{dev,etc,proc,sys,tmp,root}
