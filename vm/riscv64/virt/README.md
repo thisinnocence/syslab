@@ -22,16 +22,19 @@ sudo apt install build-essential gcc-riscv64-linux-gnu ninja-build \
     pkg-config libglib2.0-dev libpixman-1-dev flex bison bc rsync gzip
 ```
 
-QEMU 仅构建无图形界面的 `aarch64-softmmu` 和 `riscv64-softmmu`
+QEMU 仅构建无图形界面的 `riscv64-softmmu`
 
 ## 构建和运行
 
 ```sh
 cd vm/riscv64/virt
-build-all.sh
-run.sh
+./build-all.sh
+./run.sh
 ```
 
-QEMU 会为标准 `virt` machine 自动生成 DTB。guest 在 `ttyS0` 上启动交互式
-BusyBox shell。按 `Ctrl-a x` 退出 QEMU
+QEMU 会为标准 `virt` machine 自动生成 DTB。guest 在 `ttyS0` 上启动交互式 BusyBox shell
+
+- 若 machine 与 kernel 支持关机，执行 `poweroff` 可正常关闭 guest
+- 按 `Ctrl-a c` 进入 QEMU monitor 后输入 `q` 可退出 QEMU
+
 如需单独重建某个组件，运行对应的 `build-*.sh` 脚本

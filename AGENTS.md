@@ -11,7 +11,9 @@
 - 一个 `vm/<arch>/<machine>` 目录对应一个 VM build profile
 - 同一时间只保留一个 active build profile
 - active build profile 独占 `qemu/build`、`linux/build` 和 `busybox/build`
+- 每个 build 目录通过 `.syslab-profile` 记录其 owner
 - 切换 VM build profile 时，清空这三个 build 目录后重新构建
+- 构建脚本拒绝复用 owner 不匹配或没有 owner 的旧 build output
 - component 的 configure-time 选项变更时，只清空对应 component 的 build 目录
 - 同一 VM build profile 内使用 Make 和 Ninja 增量构建
 - 在目标 VM 目录中使用 `build-all.sh` 构建全部组件，并使用 `run.sh` 启动 QEMU
@@ -42,7 +44,9 @@
 修改脚本或配置后，至少执行：
 
 ```sh
-bash -n vm/<arch>/<machine>/*.sh
+for script in vm/<arch>/<machine>/*.sh; do
+    bash -n "${script}"
+done
 [ ! -f vm/<arch>/<machine>/init.sh ] || sh -n vm/<arch>/<machine>/init.sh
 git diff --check
 ```

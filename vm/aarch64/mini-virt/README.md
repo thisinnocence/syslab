@@ -27,9 +27,13 @@ QEMU 仅构建无图形界面的 `aarch64-softmmu`
 
 ```sh
 cd vm/aarch64/mini-virt
-build-all.sh
-run.sh
+./build-all.sh
+./run.sh
 ```
 
-guest 会在 `ttyAMA0` 上启动交互式 BusyBox shell。按 `Ctrl-a x` 退出 QEMU
-如需单独重建某个组件，运行对应的 `build-*.sh` 脚本。
+guest 会在 `ttyAMA0` 上启动交互式 BusyBox shell
+
+- 若 machine 与 kernel 支持关机，执行 `poweroff` 可正常关闭 guest
+- 按 `Ctrl-a c` 进入 QEMU monitor 后输入 `q` 可退出 QEMU
+
+如需单独重建某个组件，运行对应的 `build-*.sh` 脚本
