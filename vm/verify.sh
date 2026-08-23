@@ -7,6 +7,11 @@
 SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)
 
+# 检查共享 VM helper 脚本的 Bash 语法
+for script in "${REPO_ROOT}"/vm/*.sh; do
+    bash -n "${script}"
+done
+
 # 检查所有 VM 构建和启动脚本的 Bash 语法
 for script in "${REPO_ROOT}"/vm/*/*/*.sh; do
     bash -n "${script}"

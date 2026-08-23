@@ -31,6 +31,15 @@ VM 类型保持有限，演进重点是围绕已有 VM 深入完成 system 组�
 git submodule update --init --recursive
 ```
 
+## Clean Build Outputs
+
+切换 VM build profile 前，运行以下脚本删除共享的 QEMU、Linux 和 BusyBox build output，
+包括 `.syslab-profile` ownership marker：
+
+```sh
+./vm/clean.sh
+```
+
 ## Supported VMs
 
 | Arch | QEMU VM | 说明 | 入口 |
