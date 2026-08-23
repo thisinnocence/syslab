@@ -4,7 +4,7 @@
 
 - `qemu/`、`linux/`、`busybox/` 是 Git submodule
 - `vm/<arch>/<machine>/` 保存某个 arch 和 VM 的构建、启动脚本及说明文档
-- `tests/` 保存仓库级验证脚本
+- `vm/verify.sh` 保存 VM 相关的仓库级公共验证脚本
 
 ## Build Conventions
 
@@ -54,7 +54,7 @@
 修改脚本或配置后，至少执行：
 
 ```sh
-./tests/verify.sh
+./vm/verify.sh
 ```
 
 修改内容涉及构建或启动行为时，执行目标 VM 的 `build-all.sh` 后运行 QEMU，确认
