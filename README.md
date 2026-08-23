@@ -40,6 +40,18 @@ git submodule update --init --recursive
 ./vm/clean.sh
 ```
 
+## Compilation Databases
+
+每次运行某个 VM profile 的 `build-all.sh` 后，都会得到两份供 clangd 等使用、方便看代码的
+compilation database：
+
+- `$REPO_ROOT/linux/build/compile_commands.json`：Kbuild 从当前 profile 实际编译的
+  kernel source 生成，因此只包含当前 `.config` 启用的代码
+- `$REPO_ROOT/qemu/build/compile_commands.json`：QEMU 的 Meson configure 自动生成
+
+使用 clangd 查看 Linux 或 QEMU 代码时，将 compilation database directory 设为对应的 `build`
+目录。切换 profile 或修改 kernel configuration 后，重新运行 `build-all.sh` 更新数据库。
+
 ## Supported VMs
 
 | Arch | QEMU VM | 说明 | 入口 |

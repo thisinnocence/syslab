@@ -7,6 +7,7 @@ REPO_ROOT=$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)
 QEMU_SRC="${REPO_ROOT}/qemu"
 QEMU_BUILD="${QEMU_SRC}/build"
 QEMU_BIN="${QEMU_BUILD}/qemu-system-riscv64"
+QEMU_COMPILE_COMMANDS="${QEMU_BUILD}/compile_commands.json"
 JOBS=${JOBS:-$(nproc)}
 
 "${REPO_ROOT}/vm/build-profile.sh" claim riscv64/virt "${QEMU_BUILD}"
@@ -27,4 +28,6 @@ fi
 # Ninja 根据依赖关系只重新编译变更的源码
 # 源码未变更时，构建会直接完成而不会重新编译
 ninja -C "${QEMU_BUILD}" -j "${JOBS}" qemu-system-riscv64
+[[ -f "${QEMU_COMPILE_COMMANDS}" ]]
 echo "QEMU ready: ${QEMU_BIN}"
+echo "Compile commands: ${QEMU_COMPILE_COMMANDS}"

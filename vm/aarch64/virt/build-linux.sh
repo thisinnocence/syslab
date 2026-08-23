@@ -7,6 +7,7 @@ REPO_ROOT=$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)
 LINUX_SRC="${REPO_ROOT}/linux"
 LINUX_BUILD="${LINUX_SRC}/build"
 KERNEL_IMAGE="${LINUX_BUILD}/arch/arm64/boot/Image"
+LINUX_COMPILE_COMMANDS="${LINUX_BUILD}/compile_commands.json"
 ARCH=arm64
 CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-gnu-}
 JOBS=${JOBS:-$(nproc)}
@@ -25,4 +26,9 @@ make -C "${LINUX_SRC}" O="${LINUX_BUILD}" ARCH="${ARCH}" \
 make -C "${LINUX_SRC}" O="${LINUX_BUILD}" ARCH="${ARCH}" \
     CROSS_COMPILE="${CROSS_COMPILE}" -j "${JOBS}" Image
 
+# Kbuild 从已生成的 .cmd 文件提取实际编译参数，供 clangd 等使用，方便看代码
+make -C "${LINUX_SRC}" O="${LINUX_BUILD}" ARCH="${ARCH}" \
+    CROSS_COMPILE="${CROSS_COMPILE}" compile_commands.json
+
 echo "Kernel ready: ${KERNEL_IMAGE}"
+echo "Compile commands: ${LINUX_COMPILE_COMMANDS}"

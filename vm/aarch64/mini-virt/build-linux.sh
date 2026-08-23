@@ -8,6 +8,7 @@ LINUX_SRC="${REPO_ROOT}/linux"
 LINUX_BUILD="${LINUX_SRC}/build"
 KERNEL_IMAGE="${LINUX_BUILD}/arch/arm64/boot/Image"
 KERNEL_DTB="${LINUX_BUILD}/arch/arm64/boot/dts/demo/mini-virt.dtb"
+LINUX_COMPILE_COMMANDS="${LINUX_BUILD}/compile_commands.json"
 ARCH=arm64
 CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-gnu-}
 JOBS=${JOBS:-$(nproc)}
@@ -27,5 +28,10 @@ make -C "${LINUX_SRC}" O="${LINUX_BUILD}" ARCH="${ARCH}" \
     CROSS_COMPILE="${CROSS_COMPILE}" -j "${JOBS}" \
     Image demo/mini-virt.dtb
 
+# Kbuild 从已生成的 .cmd 文件提取实际编译参数，供 clangd 等使用，方便看代码
+make -C "${LINUX_SRC}" O="${LINUX_BUILD}" ARCH="${ARCH}" \
+    CROSS_COMPILE="${CROSS_COMPILE}" compile_commands.json
+
 echo "Kernel ready: ${KERNEL_IMAGE}"
 echo "DTB ready:    ${KERNEL_DTB}"
+echo "Compile commands: ${LINUX_COMPILE_COMMANDS}"
