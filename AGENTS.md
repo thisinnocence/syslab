@@ -4,7 +4,6 @@
 
 - `qemu/`、`linux/`、`busybox/` 是 Git submodule
 - `vm/<arch>/<machine>/` 保存某个 arch 和 VM 的构建、启动脚本及说明文档
-- `vm/verify.sh` 保存 VM 相关的仓库级公共验证脚本
 
 ## Build Conventions
 
@@ -29,19 +28,21 @@
 
 ## Script Conventions
 
-- 每个需要 repository root 路径的脚本使用以下形式：
+当脚本需要 repository root 路径时，使用以下形式：
 
-  ```sh
-  SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
-  REPO_ROOT=$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)
-  ```
+```sh
+SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)
+```
+
+脚本要遵守以下约定：
 
 - 保持脚本精简，不添加环境中已具备命令的冗余检查
 - arch 或 machine 专属路径直接放在对应 VM 的脚本中
 - 代码注释使用简体中文，技术术语保留英文
 - 中文注释不使用行尾句号
 - 如果句子结尾是英文单词，使用英文句号，后续有文本时在句号后保留一个空格
-- 不超过 100 个字符的说明保持单行
+- 不超过 100 个字符的注释保持单行
 
 ## VM-Specific Documentation
 
