@@ -1,19 +1,19 @@
-# RISC-V virt VM
+# RISC-V virt
 
-脚本会构建并启动以下 Git submodule 对应的组件：
+本目录下的脚本会构建并启动以下 Git submodule 对应的组件：
 
 - `$REPO_ROOT/qemu`：包含标准 `virt` machine 的 `qemu-system-riscv64`
 - `$REPO_ROOT/linux`：精简的 RISC-V `Image`
 - `$REPO_ROOT/busybox`：打包为 gzip initramfs 的静态链接 RISC-V userspace
 
-每个 repository 都将生成物保存在自身的 `build/` 目录中：
+每个 repository 都将 build output 保存在自身的 `build/` 目录中：
 
 - `$REPO_ROOT/qemu/build/qemu-system-riscv64`
 - `$REPO_ROOT/linux/build/arch/riscv/boot/Image`
 - `$REPO_ROOT/busybox/build/`，包括 `_install`、`rootfs` 和
   `initramfs.cpio.gz`
 
-## 前置依赖
+## Prerequisites
 
 在 Ubuntu 上需要安装：
 
@@ -22,9 +22,7 @@ sudo apt install build-essential gcc-riscv64-linux-gnu ninja-build \
     pkg-config libglib2.0-dev libpixman-1-dev flex bison bc rsync gzip
 ```
 
-QEMU 仅构建无图形界面的 `riscv64-softmmu`
-
-## VM 启动约定
+## VM Boot Contract
 
 - QEMU machine：标准 RISC-V `virt`
 - CPU：machine 默认的 QEMU 通用 `rv64` CPU，使用 `-smp 2` 启动两个 vCPU
@@ -37,7 +35,7 @@ QEMU 仅构建无图形界面的 `riscv64-softmmu`
 - PID 1：initramfs 中的 `/init`，挂载 pseudo-filesystem 后在 `ttyS0` 启动
   BusyBox shell；退出 shell 后执行 `poweroff -f`
 
-## 构建和运行
+## Build and Run
 
 ```sh
 cd vm/riscv64/virt

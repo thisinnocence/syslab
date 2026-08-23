@@ -1,18 +1,18 @@
-# AArch64 mini-virt VM
+# AArch64 mini-virt
 
-脚本会构建并启动以下 Git submodule 对应的组件：
+本目录下的脚本会构建并启动以下 Git submodule 对应的组件：
 
 - `$REPO_ROOT/qemu`：包含 `mini-virt` machine 的 `qemu-system-aarch64`
 - `$REPO_ROOT/linux`：精简的 arm64 `Image` 和 `mini-virt.dtb`
 - `$REPO_ROOT/busybox`：打包为 gzip initramfs 的静态链接 AArch64 userspace
 
-每个 repository 都将生成物保存在自身的 `build/` 目录中：
+每个 repository 都将 build output 保存在自身的 `build/` 目录中：
 
 - `$REPO_ROOT/qemu/build/qemu-system-aarch64`
 - `$REPO_ROOT/linux/build/arch/arm64/boot/Image` 和配套 DTB
 - `$REPO_ROOT/busybox/build/`，包括 `_install`、`rootfs` 和 `initramfs.cpio.gz`
 
-## 前置依赖
+## Prerequisites
 
 在 Ubuntu 上需要安装：
 
@@ -21,9 +21,7 @@ sudo apt install build-essential gcc-aarch64-linux-gnu ninja-build \
     pkg-config libglib2.0-dev libpixman-1-dev flex bison bc rsync gzip
 ```
 
-QEMU 仅构建无图形界面的 `aarch64-softmmu`
-
-## VM 启动约定
+## VM Boot Contract
 
 - QEMU machine：自定义 `mini-virt`
 - CPU：machine 默认的 Cortex-A57，使用 `-smp 2` 启动两个 vCPU
@@ -37,7 +35,7 @@ QEMU 仅构建无图形界面的 `aarch64-softmmu`
 - PID 1：initramfs 中的 `/init`，挂载 pseudo-filesystem 后在 `ttyAMA0` 启动
   BusyBox shell；退出 shell 后执行 `poweroff -f`
 
-## 构建和运行
+## Build and Run
 
 ```sh
 cd vm/aarch64/mini-virt
