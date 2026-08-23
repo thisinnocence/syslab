@@ -17,4 +17,5 @@ for init_script in "${REPO_ROOT}"/vm/*/*/init.sh; do
     [ ! -f "${init_script}" ] || sh -n "${init_script}"
 done
 
+# 检查未提交改动中的行尾空白等格式错误
 git -C "${REPO_ROOT}" diff --check
