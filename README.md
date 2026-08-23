@@ -31,9 +31,3 @@ cd vm/riscv64/virt
 ./build-all.sh
 ./run.sh
 ```
-
-Guest 启动后进入 BusyBox shell：
-
-- 执行 `exit` 或 `poweroff` 可正常关闭 guest
-- 按 `Ctrl-a c` 进入 QEMU monitor 后输入 `q` 可退出 QEMU
-- 按 `Ctrl-a ` 强制退出 QEMU
