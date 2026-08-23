@@ -5,6 +5,11 @@
 #
 # 意图：防止不同 VM profile 复用彼此或旧的无归属 build output
 #
+# 参数：
+# - $1：操作模式，claim 声明目录归属，require 验证已有归属
+# - $2：VM build profile 名称
+# - $3：需要声明或验证 ownership 的 build 目录
+#
 # 实现：
 # - claim：为空目录写入 .syslab-profile marker，并声明 ownership
 # - require：检查 marker 是否存在且属于指定 profile
