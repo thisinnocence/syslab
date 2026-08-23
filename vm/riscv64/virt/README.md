@@ -45,7 +45,7 @@ cd vm/riscv64/virt
 ./run.sh
 ```
 
-QEMU 会为标准 `virt` machine 自动生成 DTB。guest 在 `ttyS0` 上启动交互式 BusyBox shell
+QEMU 会为标准 `virt` machine 自动生成 DTB. guest 在 `ttyS0` 上启动交互式 BusyBox shell.
 
 - 执行 `exit` 或 `poweroff` 可正常关闭 guest
 - 按 `Ctrl-a c` 进入 QEMU monitor 后输入 `q` 可退出 QEMU
