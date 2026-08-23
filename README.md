@@ -56,3 +56,4 @@ VM 类型保持有限，演进重点是围绕已有 VM 深入完成 system 组�
 | AArch64 | `mini-virt` | 自定义的最小 ARM vm，使用配套 DTS | [README](vm/aarch64/mini-virt/README.md) |
 | AArch64 | `virt` | QEMU 标准 ARM `virt` vm，使用 Cortex-A72 和 QEMU 生成的 DTB | [README](vm/aarch64/virt/README.md) |
 | RISC-V 64 | `virt` | QEMU 标准 RISC-V `virt` vm，由 QEMU 生成 DTB | [README](vm/riscv64/virt/README.md) |
+| RISC-V 64 | `sifive_u` | SiFive HiFive Unleashed / Freedom U540，使用 QEMU 生成的 DTB | [README](vm/riscv64/sifive_u/README.md) |
