@@ -21,12 +21,9 @@ system 领域的编程。
 
 ## Evolution Principles
 
-- VM profile 保持少量、明确且可独立运行
-- arch、machine 和实验专属的脚本、配置及说明保留在对应 VM 目录中
-- 优先保证实现路径显式、容易跟踪和修改，不以消除少量重复为目标
-- 共享基础设施只处理 build ownership、仓库级验证等跨 profile 一致性问题，不隐藏
-  machine、device 或 kernel 的关键行为
-- 每个 VM 的 README 记录其 boot、device、kernel、initramfs 和 userspace contract
+VM 类型保持有限，演进重点是围绕已有 VM 深入完成 system 组件之间的配套修改。
+每项实验优先保证实现路径显式、容易跟踪和修改，而不是追求通用化或消除所有重复。
+这样可以让一次修改从仿真模型贯通到 guest 行为，形成可复现、可扩展的学习路径。
 
 首次获取 repository 后初始化 submodule：
 

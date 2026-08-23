@@ -19,6 +19,14 @@
 - 同一 VM build profile 内使用 Make 和 Ninja 增量构建
 - 在目标 VM 目录中使用 `build-all.sh` 构建全部组件，并使用 `run.sh` 启动 QEMU
 
+## Change Scope
+
+- 将一个 VM profile 视为一次实验的修改边界；涉及 QEMU、Linux 或 BusyBox 时同步检查整条链路
+- arch、machine 和实验专属实现放在对应 VM 目录，不移动到共享层以消除少量重复
+- 共享 helper 只能封装与具体 machine 无关的基础设施，并通过参数保持行为显式
+- 修改一个 VM 的启动、设备或 userspace 行为时，同步更新该 VM 的 README contract
+- 新增或修改跨 submodule 的实验时，分别验证模型、hardware description、kernel 和 userspace
+
 ## Script Conventions
 
 - 每个需要 repository root 路径的脚本使用以下形式：
