@@ -11,6 +11,7 @@ BUSYBOX_INSTALL="${BUSYBOX_BUILD}/_install"
 ROOTFS_DIR="${BUSYBOX_BUILD}/rootfs"
 INITRD_IMAGE="${BUSYBOX_BUILD}/initramfs.cpio.gz"
 
+# initramfs 只能使用当前 profile 的 Linux 与 BusyBox build output
 "${REPO_ROOT}/vm/build-profile.sh" require aarch64/virt "${LINUX_BUILD}"
 "${REPO_ROOT}/vm/build-profile.sh" require aarch64/virt "${BUSYBOX_BUILD}"
 

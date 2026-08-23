@@ -17,6 +17,7 @@ JOBS=${JOBS:-$(nproc)}
 make -C "${BUSYBOX_SRC}" O="${BUSYBOX_BUILD}" ARCH="${ARCH}" \
     CROSS_COMPILE="${CROSS_COMPILE}" allnoconfig
 
+# 使用 profile 专属 busybox.config 覆盖同名 CONFIG_* 配置项
 while IFS= read -r assignment; do
     [[ "${assignment}" == CONFIG_*=* ]] || continue
     symbol=${assignment%%=*}
