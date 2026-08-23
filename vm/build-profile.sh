@@ -35,5 +35,6 @@ fi
 
 if [[ "$(<"${MARKER}")" != "${PROFILE}" ]]; then
     echo "ERROR: remove build directory owned by another VM: ${BUILD_DIR}" >&2
+    echo "HINT: remove this build directory, then rebuild the VM profile" >&2
     exit 1
 fi
