@@ -58,5 +58,5 @@ REPO_ROOT=$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)
 ./vm/verify.sh
 ```
 
-修改内容涉及构建或启动行为时，执行目标 VM 的 `build-all.sh` 后运行 QEMU，确认
-其 README 规定的启动、设备和 userspace 行为正常工作
+修改内容涉及构建或启动时，执行目标 VM 的 `build-all.sh` 后运行 QEMU，确认
+其 README 规定的启动、guest 行为正常工作。
