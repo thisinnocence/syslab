@@ -12,6 +12,24 @@ Syslab 是用于学习 system programming 的 QEMU system laboratory，配套维
 git submodule update --init --recursive
 ```
 
+## Build Profiles
+
+每个 `vm/<arch>/<machine>/` 都是独立维护的实验 profile，但 QEMU、Linux 和
+BusyBox 的 build output 分别统一放在各自 submodule 的 `build/` 目录。因此同一时间
+只能有一个 active build profile。
+
+profile 的构建脚本会通过 `build/.syslab-profile` 记录并检查 build output 的 owner，
+拒绝复用其他 profile 或无 owner 的旧产物。首次构建某个 profile 时，直接进入其目录运行
+`./build-all.sh`；切换到另一个 profile 前，可以先在 repository root 运行：
+
+```sh
+./vm/clean.sh
+```
+
+该命令会删除三个 submodule 的 `build/` 目录（包括其中的 owner marker）。随后进入目标 profile
+重新执行 `./build-all.sh`，再运行 `./run.sh`。这样每次实验使用的 QEMU、kernel 和
+BusyBox 都属于同一个 profile，不会静默混用旧的构建结果。
+
 ## Project Goals
 
 本仓库不以支持大量 VM 类型或构建通用 VM 平台为目标。每个
