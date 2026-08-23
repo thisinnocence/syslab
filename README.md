@@ -1,6 +1,12 @@
 # Syslab
 
-用于构建和运行最小化 QEMU virtual machine 的 System and Architecture lab。
+用于构建和运行 QEMU VM 的 System laboratory , 包括：
+
+- QEMU
+- Linux kernel
+- BusyBox
+
+的配套构建和运行。
 
 首次获取 repository 后初始化 submodule：
 
@@ -26,7 +32,8 @@ cd vm/riscv64/virt
 ./run.sh
 ```
 
-guest 启动后进入 BusyBox shell：
+Guest 启动后进入 BusyBox shell：
 
 - 执行 `exit` 或 `poweroff` 可正常关闭 guest
 - 按 `Ctrl-a c` 进入 QEMU monitor 后输入 `q` 可退出 QEMU
+- 按 `Ctrl-a ` 强制退出 QEMU
