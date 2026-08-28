@@ -10,6 +10,7 @@ BUSYBOX_BUILD="${REPO_ROOT}/busybox/build"
 BUSYBOX_INSTALL="${BUSYBOX_BUILD}/_install"
 ROOTFS_DIR="${BUSYBOX_BUILD}/rootfs"
 INITRD_IMAGE="${BUSYBOX_BUILD}/initramfs.cpio.gz"
+CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-gnu-}
 
 # initramfs 只能使用当前 profile 的 Linux 与 BusyBox build output
 "${REPO_ROOT}/vm/build-profile.sh" require aarch64/mini-virt "${LINUX_BUILD}"
@@ -30,6 +31,10 @@ EOF
 # /init 以普通 Shell 脚本维护，便于编辑器高亮和独立检查；打包时复制到
 # 生成的 initramfs 根目录
 install -m 0755 "${SCRIPT_DIR}/init.sh" "${ROOTFS_DIR}/init"
+
+# 静态链接 sec driver 测试，guest 运行时只依赖 kernel system call
+"${CROSS_COMPILE}gcc" -static -Os -Wall -Wextra -Werror \
+    "${SCRIPT_DIR}/tests/sec.c" -o "${ROOTFS_DIR}/sec.bin"
 
 # 在内核 build 目录中运行辅助脚本，因为 gen_initramfs.sh 会相对于当前目录
 # 查找 usr/gen_init_cpio

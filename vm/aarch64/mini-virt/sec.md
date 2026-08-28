@@ -34,6 +34,23 @@ dmesg | grep sec
 syslab-sec a000000.sec: sec XOR device ready
 ```
 
+initramfs 根目录包含静态链接的 driver 测试程序。默认 shell 路径为 `/`，
+可以直接确认并执行：
+
+```sh
+ls -l sec.bin
+./sec.bin
+```
+
+预期结果：
+
+```text
+sec test: PASS
+```
+
+`sec.bin` 会通过 sysfs 写入两个操作数，执行 XOR 并检查 `RESULT`，随后写
+`CMD=0` 并检查结果已清零。程序返回 0 表示全部检查通过。
+
 通过 sysfs 写入操作数并触发 XOR：
 
 ```sh
