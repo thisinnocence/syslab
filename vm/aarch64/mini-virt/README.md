@@ -33,9 +33,9 @@ sudo apt install build-essential gcc-aarch64-linux-gnu ninja-build \
   U32 访问；`DATA1`、`DATA2`、`CMD`、`RESULT` 偏移分别为 `0x00`、`0x04`、
   `0x08`、`0x0c`。向 `CMD` 写 1 时 `RESULT = DATA1 xor DATA2`，写 0 时清零
   `RESULT`；`RESULT` 为只读寄存器，其余地址保留
-- sec Linux driver：`CONFIG_SYSLAB_SEC=y`，匹配 DT compatible `syslab,sec`，通过
-  platform device 的 `data1`、`data2`、`cmd` 和只读 `result` sysfs attribute
-  访问对应 register；attribute 接受十进制或 `0x` 前缀的十六进制 U32
+- sec Linux driver：`CONFIG_SYSLAB_SEC=y`，匹配 DT compatible `syslab,sec`，并通过
+  miscdevice 暴露 `/dev/sec` 字符设备；`write` 传入两个 U32 操作数并执行 XOR，
+  `read` 返回 U32 结果，`SEC_IOC_CLEAR` ioctl 清零结果
 - sec 设备和 Linux driver 验证步骤见 [`sec.md`](sec.md)
 - initramfs：`$REPO_ROOT/busybox/build/initramfs.cpio.gz`，根目录包含静态链接的
   sec driver userspace 测试程序 `/sec.bin`
