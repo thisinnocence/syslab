@@ -44,8 +44,8 @@ syslab-sec a000000.sec: sec XOR character device ready
 crw-------    1 0        0          10, ... /dev/sec
 ```
 
-initramfs 根目录包含静态链接的 driver 测试程序。默认 shell 路径为 `/`，
-可以直接执行：
+`tests/Makefile` 会静态链接 driver 测试程序，`build-initrd.sh` 将其安装到
+initramfs 根目录。默认 shell 路径为 `/`，可以直接执行：
 
 ```sh
 ./sec.bin

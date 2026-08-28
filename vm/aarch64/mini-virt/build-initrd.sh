@@ -6,11 +6,11 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)
 LINUX_SRC="${REPO_ROOT}/linux"
 LINUX_BUILD="${LINUX_SRC}/build"
-LINUX_HEADERS="${LINUX_BUILD}/headers"
 BUSYBOX_BUILD="${REPO_ROOT}/busybox/build"
 BUSYBOX_INSTALL="${BUSYBOX_BUILD}/_install"
 ROOTFS_DIR="${BUSYBOX_BUILD}/rootfs"
 INITRD_IMAGE="${BUSYBOX_BUILD}/initramfs.cpio.gz"
+SEC_TEST="${BUSYBOX_BUILD}/sec.bin"
 CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-gnu-}
 
 # initramfs 只能使用当前 profile 的 Linux 与 BusyBox build output
@@ -33,14 +33,11 @@ EOF
 # 生成的 initramfs 根目录
 install -m 0755 "${SCRIPT_DIR}/init.sh" "${ROOTFS_DIR}/init"
 
-# 导出经过清理的 UAPI header，避免 userspace 程序包含 kernel 内部 header
-make -C "${LINUX_SRC}" O="${LINUX_BUILD}" ARCH=arm64 \
-    INSTALL_HDR_PATH="${LINUX_HEADERS}" headers_install
-
-# 静态链接 sec driver 测试，guest 运行时只依赖 kernel system call
-"${CROSS_COMPILE}gcc" -static -Os -Wall -Wextra -Werror \
-    -I "${LINUX_HEADERS}/include" \
-    "${SCRIPT_DIR}/tests/sec.c" -o "${ROOTFS_DIR}/sec.bin"
+# 通过 tests/Makefile 构建 sec driver 测试，再安装到 initramfs 根目录
+make -C "${SCRIPT_DIR}/tests" CROSS_COMPILE="${CROSS_COMPILE}" \
+    LINUX_SRC="${LINUX_SRC}" LINUX_BUILD="${LINUX_BUILD}" \
+    OUTPUT="${SEC_TEST}"
+install -m 0755 "${SEC_TEST}" "${ROOTFS_DIR}/sec.bin"
 
 # 在内核 build 目录中运行辅助脚本，因为 gen_initramfs.sh 会相对于当前目录
 # 查找 usr/gen_init_cpio

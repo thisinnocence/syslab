@@ -38,7 +38,7 @@ sudo apt install build-essential gcc-aarch64-linux-gnu ninja-build \
   `read` 返回 U32 结果，`SEC_IOC_CLEAR` ioctl 清零结果
 - sec 设备和 Linux driver 验证步骤见 [`sec.md`](sec.md)
 - initramfs：`$REPO_ROOT/busybox/build/initramfs.cpio.gz`，根目录包含静态链接的
-  sec driver userspace 测试程序 `/sec.bin`
+  sec driver userspace 测试程序 `/sec.bin`；该程序由 `tests/Makefile` 构建
 - kernel boot parameter：
   `console=ttyAMA0 earlycon=pl011,0x09000000 rdinit=/init panic=-1`
 - PID 1：initramfs 中的 `/init`，挂载 pseudo-filesystem 后在 `ttyAMA0` 启动
