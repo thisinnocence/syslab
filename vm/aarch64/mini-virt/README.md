@@ -43,6 +43,7 @@ sudo apt install build-essential gcc-aarch64-linux-gnu ninja-build \
   U32 结果，`SEC_IOC_CLEAR` ioctl 清零结果，`SEC_IOC_GET_IRQ_COUNT` 返回已处理的
   中断次数
 - sec 设备和 Linux driver 验证步骤见 [`sec.md`](sec.md)
+- mini-virt SoC 的演进、软硬协同方法和验证边界见 [`SoC.md`](SoC.md)
 - initramfs：`$REPO_ROOT/busybox/build/initramfs.cpio.gz`，根目录包含静态链接的
   sec driver userspace 测试程序 `/sec.bin`；该程序由 `tests/Makefile` 构建
 - kernel boot parameter：

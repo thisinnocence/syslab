@@ -43,6 +43,10 @@ BusyBox 都属于同一个 profile，不会静默混用旧的构建结果。
 通过保留从硬件模型、kernel 到 userspace 的完整路径，使每项实验都能用于理解和实践
 system 领域的编程。
 
+本仓库也强调软硬协同设计：从真实 software workload 中识别 hotspot，在合适的 VM profile
+中共同演进 QEMU model、hardware description、driver 和 userspace validation，再将稳定的
+software-visible contract 落到 RTL/ASIC IP，实现 hardware offload。
+
 ## Evolution Principles
 
 VM 类型保持有限，演进重点是围绕已有 VM 深入完成 system 组件之间的配套修改。
