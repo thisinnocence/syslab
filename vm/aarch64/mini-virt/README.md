@@ -29,13 +29,19 @@ sudo apt install build-essential gcc-aarch64-linux-gnu ninja-build \
 - kernel：`$REPO_ROOT/linux/build/arch/arm64/boot/Image`
 - DTB：构建 `mini-virt.dtb` 并通过 `-dtb` 显式传入，描述 GICv3、architectural
   timer、PL011、sec 和 PSCI
-- sec：1 KB MMIO register 空间映射到 `0x0a000000-0x0a0003ff`，仅支持对齐的
+- sec：1 KB MMIO register 空间映射到 `0x0a000000-0x0a0003ff`，使用 PL011 UART
+  后一个 SPI 2（GIC INTID 34），触发类型为 level-high；register 仅支持对齐的
   U32 访问；`DATA1`、`DATA2`、`CMD`、`RESULT` 偏移分别为 `0x00`、`0x04`、
-  `0x08`、`0x0c`。向 `CMD` 写 1 时 `RESULT = DATA1 xor DATA2`，写 0 时清零
-  `RESULT`；`RESULT` 为只读寄存器，其余地址保留
+  `0x08`、`0x0c`，`IRQ_STATUS` 偏移为 `0x10`。向 `CMD` 写 1 时
+  `RESULT = DATA1 xor DATA2`，置位 `IRQ_STATUS.bit0` 并上报中断；向
+  `IRQ_STATUS.bit0` 写 1 清除中断，向 `CMD` 写 0 清零 `RESULT`；`RESULT` 为
+  只读寄存器，其余地址保留
 - sec Linux driver：`CONFIG_SYSLAB_SEC=y`，匹配 DT compatible `syslab,sec`，并通过
   miscdevice 暴露 `/dev/sec` 字符设备；`write` 传入两个 U32 操作数并执行 XOR，
-  `read` 返回 U32 结果，`SEC_IOC_CLEAR` ioctl 清零结果
+  等待对应 IRQ handler 完成后返回；handler 打印 `[sec-irq]: result=...` 并清除
+  level interrupt；`read` 返回
+  U32 结果，`SEC_IOC_CLEAR` ioctl 清零结果，`SEC_IOC_GET_IRQ_COUNT` 返回已处理的
+  中断次数
 - sec 设备和 Linux driver 验证步骤见 [`sec.md`](sec.md)
 - initramfs：`$REPO_ROOT/busybox/build/initramfs.cpio.gz`，根目录包含静态链接的
   sec driver userspace 测试程序 `/sec.bin`；该程序由 `tests/Makefile` 构建
