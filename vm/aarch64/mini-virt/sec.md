@@ -1,7 +1,8 @@
 # sec Device
 
-sec 是 mini-virt 中的简单 XOR MMIO 设备，1 KB register 空间映射到
-`0x0a000000-0x0a0003ff`。
+sec 是 mini-virt 中的 XOR 和 DMA test accelerator，1 KB register 空间映射到
+`0x0a000000-0x0a0003ff`。PIO XOR 用于保留原有 register/IRQ regression，DMA copy
+作为 SID 1 的 system-bus transaction 经 SMMUv3 访问 RAM。
 
 | Register | Offset | Access | Description |
 | --- | ---: | --- | --- |
@@ -10,6 +11,17 @@ sec 是 mini-virt 中的简单 XOR MMIO 设备，1 KB register 空间映射到
 | `CMD` | `0x08` | RW | 写 1 执行 XOR，写 0 清零结果 |
 | `RESULT` | `0x0c` | RO | `DATA1 xor DATA2` 的 U32 结果 |
 | `IRQ_STATUS` | `0x10` | RW1C | bit 0 表示 IRQ pending，写 1 清除 |
+| `DMA_SRC_LO` | `0x14` | RW | source IOVA bits 31:0 |
+| `DMA_SRC_HI` | `0x18` | RW | source IOVA bits 63:32 |
+| `DMA_DST_LO` | `0x1c` | RW | destination IOVA bits 31:0 |
+| `DMA_DST_HI` | `0x20` | RW | destination IOVA bits 63:32 |
+| `DMA_LEN` | `0x24` | RW | copy length，QEMU model 接受 1-256 bytes |
+| `DMA_CMD` | `0x28` | RW | 写 1 同步执行 DMA copy |
+| `DMA_STATUS` | `0x2c` | RW1C | bit 0 为 done，bit 1 为 error |
+
+DMA register 中保存的是 IOVA，不是 guest physical address。SMMUv3 根据 sec 的 SID 1
+选择 Stream Table Entry，再按 Linux 建立的 Stage 1 page table 将 IOVA 翻译成 PA。
+完整连接和 SMMU control/data plane 见 [`smmu.md`](smmu.md)。
 
 ## Interrupt Contract
 
@@ -41,20 +53,22 @@ INTID 34。Linux virtual IRQ 由 irqdomain 动态分配，例如验证时可能�
 ### QEMU Wiring
 
 sec device 在 instance initialization 中调用 `sysbus_init_irq()` 创建 anonymous IRQ
-output 0。mini-virt machine 使用 `qdev_get_gpio_in()` 取得 GIC SPI 2 的 input sink，
-再将它传给 `sysbus_create_simple()`。该 legacy helper 封装以下步骤：
+output 0。mini-virt machine 显式完成以下步骤：
 
 1. 创建并 realize sec device。
 2. 将 sec 的 MMIO region 0 映射到 `0x0a000000`。
 3. 将 sec IRQ output 0 连接到传入的 GIC input sink。
+4. 将 sec 的 DMA AddressSpace 绑定到 SMMUv3 SID 1。
 
-`sysbus_create_simple()` 只负责创建、映射和连线，不决定中断何时触发。sec register
-model 通过 `qemu_set_irq()` 控制 level-high 信号：
+machine 的创建、映射和连线不决定中断何时触发。sec register model 通过
+`qemu_set_irq()` 控制 level-high 信号：
 
 - 向 `CMD` 写 1：计算 XOR、置位 `IRQ_STATUS.bit0`、调用 `qemu_set_irq(..., 1)`。
 - 向 `IRQ_STATUS.bit0` 写 1：按 W1C 语义清除 pending、调用
   `qemu_set_irq(..., 0)`。
 - 向 `CMD` 写 0：只清零 `RESULT`，不产生中断。
+- 向 `DMA_CMD` 写 1：经 SMMUv3 AddressSpace 读取 source IOVA、写入 destination
+  IOVA、更新 `DMA_STATUS`，随后置位 `IRQ_STATUS.bit0` 并拉高中断。
 - device reset：清除 pending 并撤销 IRQ。
 - migration restore：根据迁移后的 `IRQ_STATUS` 恢复 IRQ level。
 
@@ -76,10 +90,10 @@ driver probe 按以下顺序建立中断链路：
 顺序是：
 
 1. 读取 `IRQ_STATUS`；没有 pending 时返回 `IRQ_NONE`。
-2. 读取 `RESULT`。
+2. 读取 `DMA_STATUS` 和 `RESULT`；DMA status 非零时按 RW1C 清除。
 3. 向 `IRQ_STATUS.bit0` 写 1，清除设备侧 source 并撤销 level IRQ。
-4. 增加 `irq_count`。
-5. 打印 `[sec-irq]: result=...`。
+4. 保存本次 DMA status，并增加 `irq_count`。
+5. 按 command 类型打印 XOR result 或 DMA status。
 6. 调用 `complete()` 唤醒等待本次命令的进程，并返回 `IRQ_HANDLED`。
 
 ### Event Delivery to Userspace
@@ -129,6 +143,12 @@ miscdevice 框架创建 `/dev/sec` 字符设备。userspace ABI 定义在
 | `read` | 一个 U32 | 读取 `RESULT` |
 | `ioctl` | `SEC_IOC_CLEAR` | 写 `CMD=0`，清零 `RESULT` |
 | `ioctl` | `SEC_IOC_GET_IRQ_COUNT` | 获取 Linux driver 已处理的累计中断次数 |
+| `ioctl` | `SEC_IOC_DMA_COPY`、`struct sec_dma_copy` | 复制 1-64 bytes，返回 device 写入的 destination buffer |
+
+`SEC_IOC_DMA_COPY` 使用 driver 管理的两个 64-byte coherent buffer。driver 将 source
+payload 复制到第一个 buffer，把 `dma_alloc_coherent()` 返回的 `dma_addr_t` 写入 sec
+register，等待 IRQ 后再把第二个 buffer 返回 userspace。userspace 不直接提供 DMA address，
+因此首版不引入 user-page pinning、scatter-gather 和异步 buffer 生命周期。
 
 ## Driver Verification
 
@@ -149,7 +169,7 @@ ls -l /dev/sec
 预期包含类似输出：
 
 ```text
-syslab-sec a000000.sec: sec XOR character device ready
+syslab-sec a000000.sec: sec XOR and DMA character device ready, src=... dst=...
 crw-------    1 0        0          10, ... /dev/sec
 ```
 
@@ -165,13 +185,14 @@ echo $?
 
 ```text
 sec irq test: PASS (count 0 -> 1)
+sec dma test: PASS (SID 1, IRQ count 1 -> 2)
 sec test: PASS
 0
 ```
 
 `sec.bin` 会先读取 IRQ count，再通过 `write` 下发操作数和 CMD，并检查 IRQ count
-恰好增加 1，从而确认 Linux handler 实际处理了中断。随后程序检查 XOR 结果，清零结果并
-再次检查。程序返回 0 表示中断和 register 行为均通过。
+恰好增加 1，从而确认 Linux handler 实际处理了中断。随后程序检查 XOR 结果、清零结果，
+再执行 DMA copy 并确认 payload 和 IRQ count。程序返回 0 表示 PIO、DMA 和中断行为均通过。
 
 还可以检查 handler 日志和 GIC 计数：
 
@@ -184,18 +205,18 @@ cat /proc/interrupts | grep a000000.sec
 
 ```text
 [sec-irq]: result=0xb791a987
+[sec-irq]: dma status=0x00000001
 ```
 
 `/proc/interrupts` 预期包含类似输出：
 
 ```text
-14:          1          0     GICv3  34 Level     a000000.sec
+17:          2          0     GICv3  34 Level     a000000.sec
 ```
 
 第一列 `14` 是动态分配的 Linux virtual IRQ，`34` 是 GIC INTID，`Level` 是触发类型，
-CPU count 是 handler 已处理的中断次数。再次执行 `sec.bin` 时，程序应显示 IRQ count
-从 1 增加到 2，`/proc/interrupts` 中的 count 也应同步增加，从而验证每次 CMD 都对应
-一次 handler 执行。
+CPU count 是 handler 已处理的中断次数。每次 `sec.bin` 执行一次 PIO XOR 和一次 DMA copy，
+因此 count 应增加 2。
 
 验证结束后关闭 guest：
 

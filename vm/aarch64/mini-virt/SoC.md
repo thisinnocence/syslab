@@ -37,6 +37,16 @@ RTL simulation、FPGA prototype 或 silicon validation。
                                |                                      |
                                v                                      v
                          ttyAMA0 console                    /dev/sec + sec.bin
+                                                                      |
+                                                                      | SID 1 DMA
+                                                                      v
+                                                            +------------------+
+                                                            | SMMUv3 Stage 1   |
+                                                            | @ 0x0b000000     |
+                                                            +--------+---------+
+                                                                     |
+                                                                     v
+                                                                    RAM
 ```
 
 architectural timer 是每个 CPU 的 architecture-defined timer，通过 PPI 接入 GICv3。
@@ -51,6 +61,7 @@ direct boot 负责装载 kernel、DTB 和 initramfs，不依赖一套完整的 b
 | GICv3 redistributor | 从 `0x080a0000` 开始 | per-CPU interrupt state |
 | PL011 | `0x09000000-0x09000fff` | SPI 1，INTID 33，`ttyAMA0` |
 | sec | `0x0a000000-0x0a0003ff` | SPI 2，INTID 34，level-high |
+| SMMUv3 | `0x0b000000-0x0b01ffff` | SPI 3-6，Stage 1，sec SID 1 |
 | RAM | `0x40000000-0x13fffffff` | 4 GiB guest memory |
 
 ## Evolution
@@ -167,6 +178,31 @@ Linux driver 使用 `completion` 将 IRQ event 传回发起命令的 process：`
 
 完整 IRQ contract 和 userspace notification flow 见 [`sec.md`](sec.md)。
 
+### 6. Route System-Bus DMA through SMMUv3
+
+sec 的 PIO XOR 和 interrupt path 稳定后，下一阶段加入一个最小 DMA copy operation，并将
+sec 作为 SID 1 的 system-bus master 接到 SMMUv3。Linux 标准 `arm-smmu-v3` driver 管理
+Stream Table、Context Descriptor、CMDQ、EVTQ 和 Stage 1 page table；sec driver 只通过
+generic DMA API 获得 IOVA，不直接编程 SMMU，也不依赖 physical address。
+
+```text
+dmam_alloc_coherent()
+    -> CPU virtual address + dma_addr_t(IOVA)
+    -> sec DMA registers
+    -> SID 1 IOMMU AddressSpace
+    -> SMMUv3 Stage 1 page-table walk
+    -> RAM physical address
+```
+
+QEMU 原有 SMMUv3 model 增加显式 SID 的 system-bus frontend；ARM `virt` 的 PCI frontend
+仍在访问时把 BDF 转成 SID，mini-virt 则直接取得 SID 1 AddressSpace。两种 frontend 共用
+同一套 architected SMMUv3 register、queue、translation、IOTLB 和 fault model，不复制
+一个只适用于实验的简化 SMMU。
+
+当前最小范围只验证正常 Stage 1 coherent DMA copy。PCIe、ITS/MSI、ATS/PRI、SVA、Stage 2、
+nested translation 和 fault injection 均不进入这一阶段。完整 contract 和验证证据见
+[`smmu.md`](smmu.md)。
+
 ## Repository History
 
 下面的 commits 对应主要演进节点，而不是仅按最终目录结构倒推设计：
@@ -191,6 +227,7 @@ Linux driver 使用 `completion` 将 IRQ event 传回发起命令的 process：`
 | --- | --- | --- |
 | SoC integration | `qemu/hw/arm/mini-virt.c` | CPU、memory map、system IP、IRQ routing |
 | Accelerator model | `qemu/hw/misc/sec.c` | register、command、reset、migration、IRQ state |
+| SMMUv3 model | `qemu/hw/arm/smmu-common.c`、`smmuv3.c` | SID、queue、translation、IOTLB 和 fault |
 | Hardware description | `linux/arch/arm64/boot/dts/demo/mini-virt.dts` | Linux 可发现的 reg/interrupt topology |
 | Kernel config | `vm/aarch64/mini-virt/linux.config` | mini-virt 所需的最小 driver set |
 | Kernel driver | `linux/drivers/misc/sec.c` | resource、transaction、IRQ 和 userspace boundary |

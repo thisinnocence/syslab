@@ -28,21 +28,27 @@ sudo apt install build-essential gcc-aarch64-linux-gnu ninja-build \
 - 内存：固定使用 `-m 4G`，对应 machine 从 `0x40000000` 开始的 4 GiB RAM 映射
 - kernel：`$REPO_ROOT/linux/build/arch/arm64/boot/Image`
 - DTB：构建 `mini-virt.dtb` 并通过 `-dtb` 显式传入，描述 GICv3、architectural
-  timer、PL011、sec 和 PSCI
+  timer、PL011、SMMUv3、sec 和 PSCI
+- SMMUv3：128 KiB MMIO register 空间映射到 `0x0b000000-0x0b01ffff`，使用
+  SPI 3-6；只启用 Stage 1 translation，sec 作为 SID 1 的 system-bus DMA master，
+  不涉及 PCIe、ITS、MSI、ATS、PRI、SVA 或 Stage 2
 - sec：1 KB MMIO register 空间映射到 `0x0a000000-0x0a0003ff`，使用 PL011 UART
   后一个 SPI 2（GIC INTID 34），触发类型为 level-high；register 仅支持对齐的
   U32 访问；`DATA1`、`DATA2`、`CMD`、`RESULT` 偏移分别为 `0x00`、`0x04`、
-  `0x08`、`0x0c`，`IRQ_STATUS` 偏移为 `0x10`。向 `CMD` 写 1 时
+  `0x08`、`0x0c`，`IRQ_STATUS` 偏移为 `0x10`；`0x14-0x2c` 保存 DMA source、
+  destination、length、command 和 status。向 `CMD` 写 1 时
   `RESULT = DATA1 xor DATA2`，置位 `IRQ_STATUS.bit0` 并上报中断；向
   `IRQ_STATUS.bit0` 写 1 清除中断，向 `CMD` 写 0 清零 `RESULT`；`RESULT` 为
-  只读寄存器，其余地址保留
+  只读寄存器。向 `DMA_CMD` 写 1 时，sec 使用 SID 1 的 IOVA 经 SMMUv3 复制最多
+  256 bytes，并通过同一中断报告完成状态；其余地址保留
 - sec Linux driver：`CONFIG_SYSLAB_SEC=y`，匹配 DT compatible `syslab,sec`，并通过
   miscdevice 暴露 `/dev/sec` 字符设备；`write` 传入两个 U32 操作数并执行 XOR，
   等待对应 IRQ handler 完成后返回；handler 打印 `[sec-irq]: result=...` 并清除
   level interrupt；`read` 返回
   U32 结果，`SEC_IOC_CLEAR` ioctl 清零结果，`SEC_IOC_GET_IRQ_COUNT` 返回已处理的
-  中断次数
+  中断次数，`SEC_IOC_DMA_COPY` 使用两个 coherent DMA buffer 验证 IOVA translation
 - sec 设备和 Linux driver 验证步骤见 [`sec.md`](sec.md)
+- SMMUv3 topology、SID、IOVA translation 和验证步骤见 [`smmu.md`](smmu.md)
 - mini-virt SoC 的演进、软硬协同方法和验证边界见 [`SoC.md`](SoC.md)
 - initramfs：`$REPO_ROOT/busybox/build/initramfs.cpio.gz`，根目录包含静态链接的
   sec driver userspace 测试程序 `/sec.bin`；该程序由 `tests/Makefile` 构建

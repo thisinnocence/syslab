@@ -6,6 +6,7 @@
 #include <linux/sec.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
@@ -41,6 +42,40 @@ static int read_result(int fd, uint32_t expected)
 		return -1;
 	}
 
+	return 0;
+}
+
+static int test_dma_copy(int fd)
+{
+	struct sec_dma_copy transaction = {
+		.len = 16,
+		.src = "SMMUv3 DMA test",
+	};
+	uint32_t irq_count;
+	uint32_t new_irq_count;
+
+	if (get_irq_count(fd, &irq_count))
+		return -1;
+
+	if (ioctl(fd, SEC_IOC_DMA_COPY, &transaction) < 0) {
+		perror("ioctl SEC_IOC_DMA_COPY");
+		return -1;
+	}
+	if (memcmp(transaction.src, transaction.dst, transaction.len)) {
+		fprintf(stderr, "sec dma test: copied data differs\n");
+		return -1;
+	}
+	if (get_irq_count(fd, &new_irq_count))
+		return -1;
+	if (new_irq_count != irq_count + 1) {
+		fprintf(stderr,
+			"sec dma irq test: expected count %u, got %u\n",
+			irq_count + 1, new_irq_count);
+		return -1;
+	}
+
+	printf("sec dma test: PASS (SID 1, IRQ count %u -> %u)\n",
+	       irq_count, new_irq_count);
 	return 0;
 }
 
@@ -90,6 +125,8 @@ int main(void)
 		goto out;
 	}
 	if (read_result(fd, 0))
+		goto out;
+	if (test_dma_copy(fd))
 		goto out;
 
 	puts("sec test: PASS");
