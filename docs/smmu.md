@@ -19,10 +19,12 @@
    `smmuv3_translate()`，把 IOVA 变为 PA 后继续访问 system memory。
 3. “DMA 基本都在 BQL 下”不能作为 QEMU 的通用结论。MMIO callback 默认自动取 BQL，
    但 DMA 到 RAM 的 `address_space_*()` 路径只要求 RCU，不会因为经过 `iommu_mr`
-   自动取 BQL；IOThread dataplane 本来就可以在 BQL 外运行。
+   自动取 BQL；现有 vCPU thread 也能从 lockless MMIO 发起无 BQL DMA，不一定需要新增
+   IOThread。
 4. mini-virt 当前 `sec` 是同步 MMIO 设备：guest 写 `SEC_DMA_CMD` 的 callback 内直接完成
-   DMA，因此实测整个 DMA 在 BQL 下。它没有异步 BH、timer、worker 或 IOThread，故当前
-   实验中 CPU 配 SMMU 与 sec DMA 被 BQL 串行化。
+   DMA，因此实测整个同步 DMA 调用链在 BQL 下。SMMU control MMIO、CMDQ 同步消费和
+   sec DMA 在 host device callback 层面被 BQL 串行化；这不包括 MTTCG vCPU 对 guest RAM 中
+   STE/CD/PTE/CMDQ entry 的普通访问。
 5. SMMUv3 仍有自己的 `s->mutex`。它串行化 config cache、software IOTLB、page-table
    walk 与 invalidation，不能删掉并用 BQL 替代；该锁最初就是为 BQL 外 IO dataplane
    添加的。
@@ -359,6 +361,11 @@ QEMU `system/physmem.c:prepare_mmio_access()` 的逻辑是：若当前未持有 
 `MemoryRegion.lockless_io == false`，则先取 BQL，callback 返回后释放。QEMU MTTCG 文档
 也明确说明普通 MMIO 自动由 BQL 串行化，选择 lockless IO 的设备必须自己加锁。
 
+`mttcg_cpu_thread_fn()` 为每个 vCPU 创建一个 host thread，并在进入 `tcg_cpu_exec()` 前
+释放 BQL，返回后再获取。因此“某个 thread 持有 BQL”不表示其余 vCPU 已暂停：它们仍能
+执行算术指令和 direct RAM load/store，只是在尝试进入另一个普通 MMIO callback 时会阻塞
+于 BQL。
+
 本次 GDB 还显示：一个 vCPU 停在 SMMU/SEC callback 时，main thread 阻塞在 BQL，另一个
 vCPU thread 也不能同时进入普通 MMIO device callback。这解释了当前 mini-virt 的观察结果。
 
@@ -376,19 +383,57 @@ IOThread/device worker
 可以从头到尾没有 BQL。QEMU 添加 SMMU mutex 的提交 `32cfd7f39e` 也直接说明：config cache
 可能在无 BQL 的 IO dataplane 中访问，该 mutex 以后也用于 IOTLB。
 
-### 4.3 mini-virt 当前为什么仍然安全地落在 BQL 下
+RCU 也不能按“一个 RCU thread”理解。当前配置确实只有一个 `call_rcu` worker，但 main
+thread 和每个 MTTCG vCPU 都可以注册为 RCU reader。`address_space_read/write()` 在调用者
+所在的 thread 进入 RCU read-side critical section，再直接调用 `smmuv3_translate()`；RCU
+只保证 `FlatView`/`MemoryRegion` 等对象的生命周期，不负责串行化 DMA。
+
+### 4.3 mini-virt 当前哪些操作落在 BQL 下
+
+当前 `run.sh` 使用两个 MTTCG vCPU。以 `-S` 做最小启动时实测有四个 host LWP：main
+thread、一个 `call_rcu` thread 和两个 vCPU/TCG thread。这是当前命令行和 machine 初始化
+后的观察值，不是 QEMU 的固定线程 ABI；block backend、IOThread、vhost 或其他设备仍可
+按需创建额外 thread。
 
 `sec_write(SEC_DMA_CMD)` 在普通 MMIO callback 内直接调用 `sec_dma_copy()`；read、write、
 IRQ raise 全部在 callback 返回前完成。没有：
 
-- `memory_region_set_lockless()`；
-- IOThread/AioContext；
-- BH/timer/coroutine/worker thread；
-- 把 DMA 请求排队后再异步执行。
+- `memory_region_enable_lockless_io()`；
+- 专用 IOThread、worker thread 或其他 AioContext；
+- 把 DMA 请求排队到 BH、timer 或 coroutine 后异步执行。
 
-所以对“当前 mini-virt 正常测试”可以说：SMMU 配置 MMIO、sec 寄存器和 sec DMA 都被 BQL
-串行；`s->mutex` 在这条路径上形成额外保护。不能把这个结论推广到 virtio/vhost/VFIO、
-带 IOThread 的 block/network device，或未来把 sec 改为异步的版本。
+所以对“当前 mini-virt 正常测试”可以说：SMMU control MMIO、CMDQ 同步消费、sec 寄存器
+访问和由 `SEC_DMA_CMD` callback 同步发起的 DMA，在 host device callback 层面被 BQL
+串行化；`s->mutex` 在翻译与 cache 操作上形成额外保护。一个 vCPU 正在这些 callback 中
+执行时，另一个 vCPU 不能同时进入普通 MMIO callback，但仍可继续访问 guest RAM。
+
+这个结论成立不仅要求设备“不新建 thread”，还要求 DMA 只能从持有 BQL 的普通 MMIO 或
+main-loop callback 同步发起、MemoryRegion 没有启用 lockless I/O，也没有把请求转交给
+其他 AioContext。coroutine 本身不是 host thread，关键是它最终在哪个 AioContext/thread、
+是否持有 BQL。不能把结论推广到 virtio/vhost/VFIO、带 IOThread 的 block/network device，
+或未来把 sec 改为异步或 lockless 的版本。
+
+最后还要排除一种容易混淆的并发：STE、CD、PTE 和 CMDQ entry 都位于 guest RAM，vCPU
+写这些结构走 direct RAM path，不需要 BQL。另一个 vCPU 可以在 sec DMA 的 SMMU page-table
+walk 期间修改它们；正确性依靠 guest 的锁、barrier、valid-bit publish、CFGI/TLBI 和
+`CMD_SYNC` 协议，而不是依靠 BQL。
+
+这套协议的核心是“先构造、再发布、使旧缓存失效、最后等待完成”，而不是用 CPU lock
+阻止 SMMU 并发读取。Arm IHI 0070 G.a 3.21.3.1 规定：SMMU 可以随时读取 reachable
+STE/CD，且一个多 qword 结构可能不是整体原子读取；软件应先保持 `V=0` 填好其它字段并
+执行 DSB，再发 `CMD_CFGI_* + CMD_SYNC`，然后以单次原子写发布 `V=1`，再次执行 DSB 和
+CFGI；4.3.8/4.7.3 进一步规定 CFGI/TLBI 被消费不等于失效已经完成，后续 `CMD_SYNC`
+才保证此前失效以及受影响的 in-flight walk/transaction 已越过架构完成点。Linux 将同一
+原则拆到几层实现：`io-pgtable-arm.c:arm_lpae_install_table()` 先初始化下级页表，用
+`dma_wmb()` 后的原子 PTE 更新发布指针，`arm_lpae_map_pages()` 返回前再用 `wmb()` 完成
+新 mapping 的 PTE 发布；`arm-smmu-v3.c:arm_smmu_write_ste()` 对破坏性 STE 更新执行
+`V=0 -> 填其余 qword -> V=1`，每个可见阶段通过 `CMD_CFGI_STE + CMD_SYNC` 同步，CD 更新
+也由 `arm_smmu_sync_cd()` 完成相同的 configuration cache 维护；unmap/update 则先清 PTE，
+由 IOTLB gather 汇总 `CMD_TLBI_*`，再在 `arm_smmu_iotlb_sync()` 等待 sync。多个 CPU
+提交命令时，`arm_smmu_cmdq_issue_cmdlist()` 用原子 producer/valid-map 排序 slot，写完
+entry 后执行 `dma_wmb()` 才写 `CMDQ_PROD`，请求 sync 时一直等到 `CMD_SYNC` 完成；所以
+CPU 锁只协调软件写者，barrier 负责“内容先于指针/doorbell 可见”，CFGI/TLBI 丢弃旧缓存，
+而 `CMD_SYNC` 才允许后续启动依赖该映射的 DMA，或回收旧页表和 IOVA。
 
 ## 5. 多核软件更新页表/配置时会不会撞上 DMA
 
@@ -476,7 +521,8 @@ mini-virt 配置 `CONFIG_IOMMU_DEFAULT_DMA_STRICT=y`，不会把旧 IOVA 很久�
 - `smmuv3_cmdq_consume()` 对 CFGI/TLBI/notifier 操作取同一个 mutex，所以 cache container
   不会同时被 lookup/insert/remove。
 - command queue 的 MMIO producer 在 BQL 下，多个 vCPU 不会同时修改 `cmdq.prod/cons`。
-- 当前 sec 所有可变寄存器和同步 DMA 都在 BQL 下，不需要额外 sec mutex。
+- 当前 sec 所有可变寄存器和同步 DMA 都在 BQL 下，不需要额外 sec mutex；这不保护另一个
+  MTTCG vCPU 对 guest RAM 中 SMMU 配置结构的 direct access。
 - memory core 在 `address_space_read/write()` 使用 RCU，使 DMA 翻译期间看到的 FlatView
   与 MemoryRegion 生命周期稳定。
 
