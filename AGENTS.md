@@ -4,6 +4,7 @@
 
 - `qemu/`、`linux/`、`busybox/` 是 Git submodule
 - `vm/<arch>/<machine>/` 保存某个 arch 和 VM 的构建、启动脚本及说明文档
+- `docs/` 保存学习总结、源码分析和部分设计文档，按专题独立维护
 
 ## Build Conventions
 
@@ -25,6 +26,7 @@
 - 共享 helper 只能封装与具体 machine 无关的基础设施，并通过参数保持行为显式
 - 修改一个 VM 的启动、设备或 userspace 行为时，同步更新该 VM 的 README contract
 - 新增或修改跨 submodule 的实验时，分别验证模型、hardware description、kernel 和 userspace
+- `docs/` 不作为当前代码行为的权威依据；除非用户明确要求，日常代码修改无需检查或同步更新该目录，也不将其作为验收条件
 
 ## Script Conventions
 

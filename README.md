@@ -12,6 +12,11 @@ Syslab 是用于学习 system programming 的 QEMU system laboratory，配套维
 git submodule update --init --recursive
 ```
 
+## Documentation
+
+- `vm/<arch>/<machine>/README.md` 维护对应实验的构建、启动和 guest 行为约定，随实验修改同步更新
+- [`docs/`](docs/) 保存按专题独立维护的学习总结、源码分析和部分设计文档，内容可能对应特定版本或实验阶段，不作为当前代码行为的权威依据
+
 ## Build Profiles
 
 每个 `vm/<arch>/<machine>/` 都是独立维护的实验 profile，但 QEMU、Linux 和
