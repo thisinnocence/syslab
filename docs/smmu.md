@@ -1,5 +1,189 @@
 # QEMU SMMUv3 实现、MemoryRegion 数据路径与并发分析
 
+本文先介绍通用术语与硬件概念，再分析当前实验的实现和运行证据。
+
+## 术语与概念：PCIe 和 ARM SMMU 的对应关系
+
+先把两组名称对应起来：PASID 与 SSID 表达同一种地址空间选择概念，分别出现在
+PCIe 请求和 ARM SMMU 输入中；IOMMU 是通用名称，SMMU 是 ARM 定义的 IOMMU 架构。
+
+### IOMMU 与 SMMU
+
+IOMMU（Input/Output Memory Management Unit，输入输出内存管理单元）负责设备访问
+内存时的地址翻译和访问保护。SMMU（System Memory Management Unit，系统内存管理
+单元）是 ARM 对这类功能定义的具体架构，规定了 stream、配置表、命令、故障等接口。
+
+因此可以把 SMMU 理解为『ARM 的 IOMMU』，二者不是串联的两个翻译单元。IOMMU 是
+类别，SMMU 是具体架构；讨论通用能力时使用 IOMMU，讨论 ARM 寄存器和翻译规则时
+使用 SMMU。SMMUv3 则是本文讨论的架构版本。规范链接如下：
+
+- arm-spec: <https://developer.arm.com/documentation/ihi0070/latest>
+
+### PASID 与 SSID
+
+PASID（Process Address Space ID，进程地址空间标识）是 PCIe 中的术语，
+SSID（Substream ID，子流标识）是 ARM SMMU 中的术语。它们让设备在发出 DMA 时说明：
+在这个设备请求流内，这次访问应该使用哪个地址空间，标识随请求传递。
+
+在 PCIe 接入 SMMUv3 时，请求携带的 PASID 值作为 SSID 传给 SMMU，同时传递它是否
+有效。这里是同一身份在两个接口上的表达，不需要先查 PASID 表再查 SSID 表。
+在没有 PCIe 的 SoC 中，互连可以直接提供 SSID。参见
+
+- arm-streams: <https://documentation-service.arm.com/static/5f900f54f86e16515cdc090d>
+
+```text
+PCIe : Requester ID + PASID -- frontend --> SID + SSID --> SMMU
+SoC  : master/port  + SSID  -- mapping  --> SID + SSID --> SMMU
+```
+
+这与 IOMMU/SMMU 的对应有助于理解，但关系略有不同：IOMMU/SMMU 是『通用类别与
+具体架构』，PASID/SSID 是『同一种选择身份在不同接口中的名称』。本文描述 PCIe
+接口时使用 PASID，描述 SMMU core 和 SoC 接入时使用 SSID。
+
+### ASID：区分翻译缓存中的地址空间
+
+ASID（Address Space ID，地址空间标识）用于标记 Stage 1 地址翻译缓存所属的地址空间。
+例如两个地址空间都访问 `0x1000`，却映射到不同 PA，TLB 就不能只按地址缓存结果，
+还需要区分它们所属的地址空间。ASID 让不同地址空间的翻译结果可以同时保留在缓存中。
+
+CPU MMU 和 SMMU 都有 ASID 的概念。在 SMMUv3 中，软件将 ASID 配置在 CD 中：
+请求先通过 SID 和可选 SSID 选到 CD，SMMU 再从 CD 取得页表配置和 ASID。可以理解为：
+**PASID/SSID 用于选择翻译上下文，ASID 用于标识该上下文对应的翻译缓存。**
+
+ASID 不是页表地址，也不要求与 PASID/SSID 数值相同。不同 CD 可以在遵守架构共享
+规则的前提下使用相同 ASID，因此不能假定每个 SSID 都必须对应一个独有 ASID。
+完整缓存匹配还涉及地址、VMID 等适用条件，不能简单理解成只查 `(ASID, 地址)`。
+软件修改映射或将 ASID 重新用于另一地址空间时，必须按架构协议完成所需的缓存失效
+和同步，避免命中旧的翻译结果；相关更新流程见第 5 节。
+
+### SID 与 ASID：请求流身份和翻译地址空间身份
+
+**SID 决定请求使用哪份 stream 配置，ASID 标识配置选出的 Stage 1 地址空间。**
+SID 随请求到达 SMMU；ASID 则由 SMMU 从软件配置的 CD 中取得。即使请求不携带
+SSID，启用 Stage 1 翻译后仍然会使用 CD 中的 ASID。
+
+| 对比项 | SID（Stream ID） | ASID（Address Space ID） |
+| --- | --- | --- |
+| 表达的身份 | 哪条设备请求流 | 哪个 Stage 1 翻译地址空间 |
+| 来源 | 芯片互连产生或映射，PCIe 场景可从 Requester ID 映射 | 系统软件管理并写入 CD |
+| 主要用途 | 索引 STE，决定翻译模式及后续上下文选择 | 标记翻译缓存，参与 TLB 匹配及失效 |
+| 对应的维护操作 | CFGI 更新 stream/context 配置缓存，CD 操作还可涉及 SSID | TLBI 维护翻译缓存，按命令还可涉及 VA、VMID 等 |
+| 与设备的关系 | 一个设备可能有多个 SID | 多个设备的 stream 可以使用同一地址空间的 ASID |
+
+Arm 官方手册 IHI 0070 G.a 第 3.3 节、文内第 50 页说明：翻译缓存的架构身份由
+`{StreamWorld, VMID, ASID, Address}` 区分，而不是由 SID/SSID 唯一区分。
+其中 StreamWorld 表示翻译所处的安全状态与异常级翻译环境。不同 SID/SSID 可以共享
+翻译缓存，但当它们得到相同的 StreamWorld、VMID 和 ASID 时，影响 TLB 查找的配置
+必须一致，例如页表基址和 translation granule。见
+[Arm SMMU Architecture Specification, IHI 0070 G.a](https://documentation-service.arm.com/static/66c5c097882fec713ef4a8ff#page=50)。
+
+例如两个设备共享同一份 DMA 地址空间，可以有如下配置；以下假设 StreamWorld、VMID
+及其他影响翻译的配置相同：
+
+```text
+设备 A → SID 10 → STE/CD → 页表 P，ASID 7 ─┐
+                                          |→ 可共享地址空间 P 的翻译缓存
+设备 B → SID 20 → STE/CD → 页表 P，ASID 7 ─┘
+```
+
+SID 不同仍能共享翻译结果，说明『请求来自哪里』与『地址如何解释』是两个独立维度。
+反过来，如果两份配置使用不同页表，却在相同翻译环境中使用同一个 ASID，不能指望
+SID 不同来隔离缓存；软件必须满足架构的 ASID 分配、共享和复用规则。
+
+Linux 社区的实现也体现了这两个维度。以
+[Linux v6.12 的 arm-smmu-v3 驱动](https://github.com/torvalds/linux/blob/v6.12/drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c)
+为固定源码参考：
+
+- `arm_smmu_insert_master()` 从设备的 `iommu_fwspec.ids` 获取 SID，登记 master 的
+  streams；这些值来自固件描述及 IOMMU 配置流程，不是从 ASID 分配器取得。
+- Stage 1 domain 的初始化使用 `arm_smmu_asid_xa` 分配 ASID，构造 CD 时通过
+  `CTXDESC_CD_0_ASID` 写入配置。普通 DMA domain 的 ASID 因而不等同于某个进程 PID。
+- `arm_smmu_cmdq_build_cmd()` 为 CFGI 命令编码 SID/SSID，为相关 TLBI 命令编码
+  ASID/VMID/地址；`arm_smmu_tlb_inv_asid()` 则按 ASID 下发失效并同步。
+
+这也解释了为什么修改 STE/CD 后的 CFGI 与修改页表映射后的 TLBI 是不同操作：
+它们分别维护『如何选择翻译配置』和『已经缓存的地址翻译结果』，不能相互替代。
+
+### 从一个设备服务两个进程说起
+
+假设两个进程共享同一个加速器，都要求设备访问地址 `0x1000`。两个进程各有自己的
+页表，因此这个相同的地址可能对应不同的物理内存。IOMMU 如果只知道『哪个设备发出
+请求』，就无法进一步判断该使用哪个进程的翻译上下文。
+
+可以让设备的工作队列或任务描述符记录对应的 PASID，设备执行任务时将它附在 DMA
+请求上。于是请求包含的信息从『设备 + 地址』变成『设备 + PASID + 地址』：
+
+```text
+进程 A 的任务 → 加速器 → PASID 10 + 地址 0x1000 → A 的翻译上下文 → PA 0x80001000
+进程 B 的任务 → 加速器 → PASID 20 + 地址 0x1000 → B 的翻译上下文 → PA 0x90001000
+```
+
+图中的编号和地址只是示例。设备如何获得 PASID，由它的队列、描述符和提交接口决定；
+IOMMU 不会因为某个进程此刻正在 CPU 上运行，就自动知道异步 DMA 属于这个进程。
+系统软件需要先建立『请求标识 → 翻译上下文』的绑定，并在设备提交路径上控制谁可以
+使用该标识。PASID 本身不承担权限检查，也不能替代正确的页表配置和生命周期管理。
+
+PCIe 定义的 PASID 最大为 20 bit，实际可用宽度取决于设备与平台能力。它与操作系统
+的 PID 没有数值对应要求；同一进程的线程可以共享地址空间，PASID 标识的是这里需要
+选择的地址空间，而不是某个正在执行的线程。Linux 的
+SVA 文档给出了分配 PASID、绑定页表和向设备传递标识的实例。
+
+- linux-sva: <https://docs.kernel.org/6.18/arch/x86/sva.html>
+
+### Requester ID、SID、PASID/SSID、ASID 分别负责哪一步
+
+| 标识 | 所在边界 | 作用 |
+| --- | --- | --- |
+| PCI Requester ID（通常由 BDF 表示） | PCIe 请求 | 区分请求来自哪个 PCI function |
+| SID（Stream ID） | SMMU 输入 | 选择 stream 的配置；由 PCI 或 SoC 互连映射产生 |
+| PASID / SSID | 分别位于 PCIe 请求 / SMMU 输入 | 同一种子流选择身份，在 requester / stream 内进一步选择地址空间 |
+| ASID（Address Space ID） | 翻译配置与缓存 | 标记 Stage 1 翻译缓存所属的地址空间，参与缓存匹配与失效 |
+
+Requester ID 到 SID 的映射由 frontend 决定；PASID/SSID 选择上下文后，才会从配置中
+取得 ASID。PASID/SSID 与 ASID 不要求数值相同，也不是同一个字段。
+
+对于本文关注的 SMMUv3 Stage 1 路径，可以先理解成：
+
+```text
+SID → STE（Stream Table Entry，流表项）
+        └─ 可选 SSID → CD（Context Descriptor，上下文描述符）
+                        ├─ 页表配置 → 将请求地址翻译成 PA
+                        └─ ASID → 标识相应的翻译缓存
+```
+
+这是概念图，具体 CD 选择仍受 STE 配置约束。请求必须区分『没有提供 SSID』和
+『提供了值为 0 的 SSID』，不能用整数 0 同时表示二者。
+
+### 支持 PASID 与共享进程页表的关系
+
+SVA（Shared Virtual Addressing，共享虚拟地址）让设备和 CPU 使用同一进程的虚拟
+地址空间，上面的双进程示例可以这样实现。但『可以携带 PASID/SSID 选择上下文』只是
+基础能力，并不自动意味着已实现 SVA。
+
+完整 SVA 还涉及进程页表绑定、地址空间退出和失效同步等；若允许设备访问尚未驻留的
+页面，还需要相应的缺页处理机制。PASID 本身不要求同时实现所有 ATS/PRI 服务。
+
+验证多 substream 翻译时，可以使用测试建立的独立页表，不必一开始就绑定真实进程
+页表。本文后续 mini-virt 实测仅覆盖默认上下文，不代表已经实现 PASID/SSID 多上下文
+或 SVA。
+
+### SoC 控制路径与 DMA 请求身份
+
+SoC 的实际互连拓扑决定请求如何到达 SMMU。设备寄存器挂在哪条总线上，并不能决定
+该设备 DMA 使用哪个地址空间。一个外设可能通过 APB 接收 CPU 配置，另有 AXI master
+接口发起 DMA；也可能由独立 DMA controller 代表外设搬运数据。
+
+CPU 对外设寄存器的控制访问和设备发出的 DMA 是两条路径，前者不必经过后者的
+SMMU 翻译入口。CHI/AXI/AHB/APB 的实际连接顺序由芯片决定，不能从协议名称推导出
+固定拓扑。QEMU 中的 AddressSpace 表达功能访问视图，并不自动模拟总线握手、仲裁
+时序或 CHI 缓存一致性协议。
+
+SID 不是 QEMU 对象编号，AXI transaction ID 也不能未经芯片映射规则直接当作 SID。
+一个设备可以有多个 DMA 请求出口，不同出口可以映射到不同 SID 或 SMMU；多个出口
+也可以显式共享同一 stream。同一数值 SID 在不同 SMMU 实例中属于不同的 stream。
+
+## 当前实验与分析范围
+
 本文以当前 syslab checkout 为准：QEMU 10.2.0，QEMU 子模块基线
 `cf9f4c79a5`，machine 为 `mini-virt`，两个 MTTCG vCPU，SMMUv3 仅启用 Stage 1，
 `sec` 是固定 Stream ID 1 的 system-bus DMA master。分析同时对照：
