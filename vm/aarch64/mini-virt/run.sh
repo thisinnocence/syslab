@@ -25,4 +25,4 @@ exec "${QEMU_BIN}" \
     -kernel "${REPO_ROOT}/linux/build/arch/arm64/boot/Image" \
     -dtb "${REPO_ROOT}/linux/build/arch/arm64/boot/dts/demo/mini-virt.dtb" \
     -initrd "${REPO_ROOT}/busybox/build/initramfs.cpio.gz" \
-    -append "console=ttyAMA0 earlycon=pl011,0x09000000 rdinit=/init panic=-1"
+    -append "console=ttyAMA0 earlycon=pl011,0x09000000 rdinit=/init panic=-1 sec.fault_test=${SEC_FAULT_TEST:-0}"

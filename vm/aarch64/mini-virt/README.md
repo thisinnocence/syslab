@@ -29,31 +29,24 @@ sudo apt install build-essential gcc-aarch64-linux-gnu ninja-build \
 - kernel：`$REPO_ROOT/linux/build/arch/arm64/boot/Image`
 - DTB：构建 `mini-virt.dtb` 并通过 `-dtb` 显式传入，描述 GICv3、architectural
   timer、PL011、SMMUv3、sec 和 PSCI
-- SMMUv3：128 KiB MMIO register 空间映射到 `0x0b000000-0x0b01ffff`，使用
-  SPI 3-6；只启用 Stage 1 translation，sec 作为 SID 1 的 system-bus DMA master，
-  不涉及 PCIe、ITS、MSI、ATS、PRI、SVA 或 Stage 2
-- sec：1 KB MMIO register 空间映射到 `0x0a000000-0x0a0003ff`，使用 PL011 UART
-  后一个 SPI 2（GIC INTID 34），触发类型为 level-high；register 仅支持对齐的
-  U32 访问；`DATA1`、`DATA2`、`CMD`、`RESULT` 偏移分别为 `0x00`、`0x04`、
-  `0x08`、`0x0c`，`IRQ_STATUS` 偏移为 `0x10`；`0x14-0x2c` 保存 DMA source、
-  destination、length、command 和 status。向 `CMD` 写 1 时
-  `RESULT = DATA1 xor DATA2`，置位 `IRQ_STATUS.bit0` 并上报中断；向
-  `IRQ_STATUS.bit0` 写 1 清除中断，向 `CMD` 写 0 清零 `RESULT`；`RESULT` 为
-  只读寄存器。向 `DMA_CMD` 写 1 时，sec 使用 SID 1 的 IOVA 经 SMMUv3 复制最多
-  256 bytes，并通过同一中断报告完成状态；其余地址保留
-- sec Linux driver：`CONFIG_SYSLAB_SEC=y`，匹配 DT compatible `syslab,sec`，并通过
-  miscdevice 暴露 `/dev/sec` 字符设备；`write` 传入两个 U32 操作数并执行 XOR，
-  等待对应 IRQ handler 完成后返回；handler 打印 `[sec-irq]: result=...` 并清除
-  level interrupt；`read` 返回
-  U32 结果，`SEC_IOC_CLEAR` ioctl 清零结果，`SEC_IOC_GET_IRQ_COUNT` 返回已处理的
-  中断次数，`SEC_IOC_DMA_COPY` 使用两个 coherent DMA buffer 验证 IOVA translation
+- SMMUv3：128 KiB MMIO `0x0b000000-0x0b01ffff`，SPI 3–6，Stage 1 coherent DMA；
+  SEC 四个 VF 分别使用 SID 1–4，不涉及 PCIe、ITS/MSI、ATS/PRI、SVA 或 Stage 2
+- SEC：一个片内设备，四个固定 VF，各有 4 KB MMIO 窗口
+  `0x0a000000 + VF_ID * 0x1000`、SPI `8 + VF_ID`（GIC INTID 40–43，level-high）
+  和独立 DMA AddressSpace；每个 VF 支持 PIO XOR、DMA copy、完成 IRQ 和本地复位
+- SEC Linux driver：`CONFIG_SYSLAB_SEC=y`，匹配四个 `syslab,sec-vf` DT 节点，各有
+  独立 DMA domain、buffer、mutex 和 completion，暴露 `/dev/sec0`–`/dev/sec3`；每个 VF
+  独占 open，最后 close 或进程退出后清理；同一 VF 同步执行请求，不同 VF 可并发使用
+- SEC UAPI：保留 XOR/clear/IRQ count 和 1–64 bytes DMA copy，新增 VF 信息查询、本地
+  复位及默认关闭的受控 IOVA fault 测试；应用选择对应 `/dev/secN`，不直接传入 DMA address
 - sec 设备和 Linux driver 验证步骤见 [`sec.md`](sec.md)
 - SMMUv3 topology、SID、IOVA translation 和验证步骤见 [`smmu.md`](smmu.md)
 - mini-virt SoC 的演进、软硬协同方法和验证边界见 [`SoC.md`](SoC.md)
 - initramfs：`$REPO_ROOT/busybox/build/initramfs.cpio.gz`，根目录包含静态链接的
   sec driver userspace 测试程序 `/sec.bin`；该程序由 `tests/Makefile` 构建
 - kernel boot parameter：
-  `console=ttyAMA0 earlycon=pl011,0x09000000 rdinit=/init panic=-1`
+  `console=ttyAMA0 earlycon=pl011,0x09000000 rdinit=/init panic=-1 sec.fault_test=0`
+  （`SEC_FAULT_TEST=1` 启动时将最后一项设为 1）
 - PID 1：initramfs 中的 `/init`，挂载 pseudo-filesystem 后在 `ttyAMA0` 启动
   BusyBox shell；退出 shell 后执行 `poweroff -f`
 
@@ -71,3 +64,13 @@ guest 会在 `ttyAMA0` 上启动交互式 BusyBox shell
 - 按 `Ctrl-a c` 进入 QEMU monitor 后输入 `q` 可退出 QEMU
 
 如需单独重建某个组件，运行对应的 `build-*.sh` 脚本
+
+## SEC 多进程验证
+
+在 guest 中运行 `./sec.bin --all`，检查四个 VF 的 XOR/DMA/IRQ、独占访问、复位隔离、
+四进程各 200 轮并发和 SIGKILL 后重新打开，预期 `sec test: PASS` 且退出码为 0。
+默认 `./sec.bin` 只测 VF0，`./sec.bin --vf 2` 选择 VF2。
+
+host 使用 `SEC_FAULT_TEST=1 ./vm/aarch64/mini-virt/run.sh` 重新启动后，guest 执行
+`./sec.bin --all --fault`，进一步验证映射撤销后的旧 IOVA 被拒绝及 DMA 恢复。
+这是同一 guest 内的功能隔离实验；尚不包含跨 VM 直通、异步 DMA 或性能仿真。

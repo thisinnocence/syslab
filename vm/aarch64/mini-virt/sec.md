@@ -1,225 +1,199 @@
-# sec Device
+# SEC 多 VF 设备
 
-sec 是 mini-virt 中的 XOR 和 DMA test accelerator，1 KB register 空间映射到
-`0x0a000000-0x0a0003ff`。PIO XOR 用于保留原有 register/IRQ regression，DMA copy
-作为 SID 1 的 system-bus transaction 经 SMMUv3 访问 RAM。
+SEC 是 mini-virt 的片内 XOR/DMA accelerator。一个 QEMU `sec` 设备包含四个固定 VF，
+每个 VF 拥有独立寄存器、完成中断和 DMA stream。Linux 将每个 VF 作为独立 platform
+设备管理，业务进程通过 `/dev/sec0`–`/dev/sec3` 分别使用它们。
 
-| Register | Offset | Access | Description |
+这里的 VF 是片内虚拟功能，不是 PCIe SR-IOV VF。当前验证同一个 Linux guest 中的多进程
+使用；没有 PF 管理协议、动态 VF 创建、跨 VM 直通或 Stage 2。QEMU 在 MMIO callback 中
+同步完成计算和 DMA，多进程可以并发提交，但模型不模拟内部流水线或真实吞吐量。
+
+## 资源与所有权
+
+| VF | MMIO，4 KB 窗口 | GIC SPI / INTID | SID | Linux 字符设备 |
+| --- | --- | --- | --- | --- |
+| VF0 | `0x0a000000-0x0a000fff` | 8 / 40 | 1 | `/dev/sec0` |
+| VF1 | `0x0a001000-0x0a001fff` | 9 / 41 | 2 | `/dev/sec1` |
+| VF2 | `0x0a002000-0x0a002fff` | 10 / 42 | 3 | `/dev/sec2` |
+| VF3 | `0x0a003000-0x0a003fff` | 11 / 43 | 4 | `/dev/sec3` |
+
+四根 IRQ 都是 level-high。SMMUv3 保持 SPI 3–6，PL011 保持 SPI 1。
+`mini-virt.c` 负责全部 MMIO/IRQ/SID 连线；Linux DTS 的四个 `syslab,sec-vf` 节点必须逐一
+匹配，每个节点只有自己的 `reg`、`interrupts` 和 `iommus = <&smmu SID>`。
+
+```text
+                     一个 SEC 物理设备
+/dev/sec0 -> driver0 -> VF0 registers -> AddressSpace(SMMU, SID 1)
+/dev/sec1 -> driver1 -> VF1 registers -> AddressSpace(SMMU, SID 2)
+/dev/sec2 -> driver2 -> VF2 registers -> AddressSpace(SMMU, SID 3)
+/dev/sec3 -> driver3 -> VF3 registers -> AddressSpace(SMMU, SID 4)
+                                              |
+                                     STE / CD / Stage 1 页表
+                                              |
+                                             RAM
+```
+
+每个 VF 在 Linux 中拥有自己的 `struct device`、DMA domain、两个 coherent buffer、mutex、
+completion 和 IRQ count。`dmam_alloc_coherent()` 使用当前 VF 的 device，因此相同 IOVA
+可以在不同 SID 下映射到不同 PA。单个 Linux device 配置多个 SID 并不自动产生这种隔离。
+SMMU 的详细证据见 [`smmu.md`](smmu.md)。
+
+## 寄存器约定
+
+下表偏移均相对于当前 VF 的窗口，支持 little-endian、4 字节对齐的 U32 访问。
+保留地址读零、忽略写入；只读寄存器忽略写入并记录 QEMU guest error。
+
+| Register | Offset | Access | Behavior |
 | --- | ---: | --- | --- |
 | `DATA1` | `0x00` | RW | 第一个 U32 操作数 |
 | `DATA2` | `0x04` | RW | 第二个 U32 操作数 |
-| `CMD` | `0x08` | RW | 写 1 执行 XOR，写 0 清零结果 |
-| `RESULT` | `0x0c` | RO | `DATA1 xor DATA2` 的 U32 结果 |
-| `IRQ_STATUS` | `0x10` | RW1C | bit 0 表示 IRQ pending，写 1 清除 |
-| `DMA_SRC_LO` | `0x14` | RW | source IOVA bits 31:0 |
-| `DMA_SRC_HI` | `0x18` | RW | source IOVA bits 63:32 |
-| `DMA_DST_LO` | `0x1c` | RW | destination IOVA bits 31:0 |
-| `DMA_DST_HI` | `0x20` | RW | destination IOVA bits 63:32 |
-| `DMA_LEN` | `0x24` | RW | copy length，QEMU model 接受 1-256 bytes |
-| `DMA_CMD` | `0x28` | RW | 写 1 同步执行 DMA copy |
-| `DMA_STATUS` | `0x2c` | RW1C | bit 0 为 done，bit 1 为 error |
+| `CMD` | `0x08` | RW | 写 1 执行 XOR 并置 IRQ pending；写 0 只清零结果 |
+| `RESULT` | `0x0c` | RO | `DATA1 xor DATA2` |
+| `IRQ_STATUS` | `0x10` | RW1C | bit 0 为 pending；写 1 清除并撤销 IRQ |
+| `DMA_SRC_LO/HI` | `0x14/0x18` | RW | source IOVA 低/高 32 位 |
+| `DMA_DST_LO/HI` | `0x1c/0x20` | RW | destination IOVA 低/高 32 位 |
+| `DMA_LEN` | `0x24` | RW | QEMU 接受 1–256 bytes |
+| `DMA_CMD` | `0x28` | RW | 写 1 经当前 VF 的 AddressSpace 同步复制 |
+| `DMA_STATUS` | `0x2c` | RW1C | bit 0 为 DONE，bit 1 为 ERROR；写 1 清对应位 |
+| `VF_ID` | `0x30` | RO | VF 编号 0–3 |
+| `SID` | `0x34` | RO | machine 绑定的 SID，仅供查询 |
+| `RESET` | `0x38` | WO | 写 1 复位当前 VF；读零；其他值忽略 |
 
-DMA register 中保存的是 IOVA，不是 guest physical address。SMMUv3 根据 sec 的 SID 1
-选择 Stream Table Entry，再按 Linux 建立的 Stage 1 page table 将 IOVA 翻译成 PA。
-完整连接和 SMMU control/data plane 见 [`smmu.md`](smmu.md)。
+DMA source/destination 都是 IOVA。SID 不来自 guest 命令，而由 machine 绑定的
+`AddressSpace` 决定，guest 不能通过改寄存器冒用另一个 VF 的 SID。
 
-## Interrupt Contract
+DMA 长度无效、source 读取失败或 destination 写入失败时，置 ERROR 并产生一次完成 IRQ。
+source 读取失败时不会发起 destination 写入；一般的 destination 写失败不承诺事务回滚。
+成功时置 DONE 并产生一次完成 IRQ。PIO XOR 与 DMA 共享当前 VF 的 IRQ，驱动串行化同一
+VF 的命令，保证 pending 被确认后才开始下一条命令。
 
-### Interrupt Number
+单 VF 复位清零所有可写状态和结果、撤销该 VF 的 IRQ，保留 VF_ID、SID 和 DMA 连线；
+其他 VF 不变。整机复位依次复位所有启用的 VF。
 
-sec 使用 GICv3 SPI 2，即 PL011 UART 的 SPI 1 后一个中断号。GIC architecture 中
-SGI 和 PPI 占用 INTID 0-31，因此 SPI 0 对应 INTID 32，sec 的 SPI 2 对应 INTID 34。
+QEMU `SecState` 包含 `SecVF[]`；设备属性 `num-vfs` 支持 1–4，mini-virt 固定设置为 4。
+改变板级 VF 数量需要同步修改 machine 和 DTS。创建时要求每个启用的 VF 都已绑定 DMA
+AddressSpace。SEC VMState 更新为版本 4，保存各 VF 的寄存器，校验 VF 数量和 SID，并在
+恢复时重新拉起 pending IRQ；不接受旧单 VF 版本 1–3 的 migration stream。当前验收不包含
+整机迁移兼容性。
 
-DT 中断描述为：
+## Linux 与用户态 ABI
 
-```dts
-// DT SPI number 从 0 开始，Linux GIC domain 会加 32 转成硬件 INTID
-// 此处 SPI 2 对应 GIC INTID 34，0x04 表示 level-high
-interrupts = <0x00 0x02 0x04>;
-```
+驱动由 `CONFIG_SYSLAB_SEC=y` 启用；probe 检查寄存器 SID 与 DTS 中唯一 SID 一致，并要求
+translated DMA domain。默认字符设备权限为 `0600`，将节点权限分配给不同业务用户即可
+控制使用方。该驱动用于固定板级设备，不提供 sysfs bind/unbind 或 VF 热插拔。
 
-三个 cell 的含义分别是：
+| Operation | Behavior |
+| --- | --- |
+| `open("/dev/secN", O_RDWR)` | 独占该 VF，其他 open 返回 `EBUSY` |
+| `write(struct sec_operands)` | 提交两个 U32 执行 XOR，等待 IRQ handler 后返回 |
+| `read(U32)` | 读取该 VF 当前 XOR 结果 |
+| `SEC_IOC_CLEAR` | 只清 XOR 结果，不产生 IRQ |
+| `SEC_IOC_DMA_COPY` | 同步复制 1–64 bytes，返回 `struct sec_dma_copy.dst` |
+| `SEC_IOC_GET_IRQ_COUNT` | 返回该 VF 自 probe 起 handler 处理的累计次数 |
+| `SEC_IOC_GET_INFO` | 返回 `vf_id`、`sid`、`max_dma_len` 和能力 flags |
+| `SEC_IOC_RESET` | 复位该 VF，清空驱动 buffer/completion；累计 IRQ count 不清零 |
+| `SEC_IOC_TEST_FAULT` | 执行受控的有效映射→撤销→旧 IOVA fault 测试，默认禁用 |
+| 最后一次 `close` | 复位并清理 VF 后释放独占权；进程异常退出同样处理 |
 
-| Cell | Value | Meaning |
-| --- | ---: | --- |
-| interrupt type | `0x00` | SPI |
-| interrupt number | `0x02` | 从 0 开始编号的 SPI 2 |
-| flags | `0x04` | level-high |
+`fork/dup` 共享同一个 open file description，最后一个引用关闭时才释放 VF。这不是按 PID
+授权；共享 fd 的线程/进程属于同一使用方，需要自行协调分离的 `write/read` 操作。
+不同 open 的排他性防止无关业务覆盖 XOR 结果。同一 VF 的每个命令由 mutex 保护，不同
+VF 不共享这把锁。
 
-Linux GICv3 irqdomain 解析 DT 时执行 `hwirq = DT SPI number + 32`，因此得到硬件
-INTID 34。Linux virtual IRQ 由 irqdomain 动态分配，例如验证时可能显示为 IRQ 14，
-它不是 DT 中填写的 SPI number，也不要求每次启动保持不变。
+UAPI 位于 `linux/include/uapi/linux/sec.h`。DMA 的两个 64-byte buffer 由驱动管理；用户态
+只传 payload，不传 IOVA/PA，不涉及 user-page pinning、scatter-gather、异步队列或 mmap。
+原 `/dev/sec` 改为 `/dev/sec0`–`/dev/sec3`，原有命令编号和数据结构保留，测试程序默认 VF0。
 
-### QEMU Wiring
-
-sec device 在 instance initialization 中调用 `sysbus_init_irq()` 创建 anonymous IRQ
-output 0。mini-virt machine 显式完成以下步骤：
-
-1. 创建并 realize sec device。
-2. 将 sec 的 MMIO region 0 映射到 `0x0a000000`。
-3. 将 sec IRQ output 0 连接到传入的 GIC input sink。
-4. 将 sec 的 DMA AddressSpace 绑定到 SMMUv3 SID 1。
-
-machine 的创建、映射和连线不决定中断何时触发。sec register model 通过
-`qemu_set_irq()` 控制 level-high 信号：
-
-- 向 `CMD` 写 1：计算 XOR、置位 `IRQ_STATUS.bit0`、调用 `qemu_set_irq(..., 1)`。
-- 向 `IRQ_STATUS.bit0` 写 1：按 W1C 语义清除 pending、调用
-  `qemu_set_irq(..., 0)`。
-- 向 `CMD` 写 0：只清零 `RESULT`，不产生中断。
-- 向 `DMA_CMD` 写 1：经 SMMUv3 AddressSpace 读取 source IOVA、写入 destination
-  IOVA、更新 `DMA_STATUS`，随后置位 `IRQ_STATUS.bit0` 并拉高中断。
-- device reset：清除 pending 并撤销 IRQ。
-- migration restore：根据迁移后的 `IRQ_STATUS` 恢复 IRQ level。
-
-level interrupt 必须先清除设备侧 pending source 才会撤销。如果在前一次 pending 尚未
-清除时直接再次写 `CMD=1`，IRQ line 已经处于 high，不会形成一个可区分的新事件。当前
-Linux driver 通过同步完成每次命令，避免经由 `/dev/sec` 下发的连续命令被合并。
-
-### Linux IRQ Handling
-
-driver probe 按以下顺序建立中断链路：
-
-1. 使用 `devm_platform_ioremap_resource()` 映射 sec register。
-2. 使用 `platform_get_irq()` 将 DT interrupt specifier 映射为 Linux virtual IRQ。
-3. 初始化 IRQ count 和 `completion`。
-4. 使用 `devm_request_irq()` 注册 `sec_irq_handler()`。
-
-硬件 IRQ handler 只能运行在内核态。hard IRQ context 不能睡眠，也不能直接调用
-`copy_to_user()` 访问用户地址，因此 handler 不会直接执行用户态回调。sec handler 的处理
-顺序是：
-
-1. 读取 `IRQ_STATUS`；没有 pending 时返回 `IRQ_NONE`。
-2. 读取 `DMA_STATUS` 和 `RESULT`；DMA status 非零时按 RW1C 清除。
-3. 向 `IRQ_STATUS.bit0` 写 1，清除设备侧 source 并撤销 level IRQ。
-4. 保存本次 DMA status，并增加 `irq_count`。
-5. 按 command 类型打印 XOR result 或 DMA status。
-6. 调用 `complete()` 唤醒等待本次命令的进程，并返回 `IRQ_HANDLED`。
-
-### Event Delivery to Userspace
-
-当前 ABI 使用 `completion` 将内核 IRQ 事件同步传递给发起命令的用户进程：
+## 中断、完成与恢复
 
 ```text
-userspace write()
-        |
-        v
-sec_write(): reinit_completion() -> 写 DATA1/DATA2/CMD
-        |
-        v
-wait_for_completion_timeout()，调用进程睡眠
-        |
-        v
-QEMU sec 置 pending 并拉高 SPI 2
-        |
-        v
-GICv3 -> Linux sec_irq_handler()
-        |
-        +-> 读取结果 -> W1C 清中断 -> irq_count++ -> complete()
-                                                        |
-                                                        v
-                                        sec_write() 被唤醒并返回用户态
+write / DMA ioctl
+    -> 锁住当前 VF，reinit_completion()
+    -> 写寄存器、CMD；DMA 提交前 dma_wmb()
+    -> QEMU 计算或 DMA，更新状态并拉高该 VF 的 SPI
+    -> Linux sec_irq_handler()
+         -> 读取状态，W1C DMA_STATUS 和 IRQ_STATUS
+         -> 保存状态，irq_count++，complete()
+    -> 等待方醒来；DMA 完成后 dma_rmb() 并读取 destination
+    -> 解锁并返回
 ```
 
-`sec_write()` 持有 transaction mutex，直到对应 handler 调用 `complete()`，因此同一时刻
-只允许一条完整的 sec 命令。正常返回表示对应 IRQ 已经由 Linux handler 处理；超过 1 秒
-仍未收到 IRQ 时返回 `-ETIMEDOUT`。
+handler 不获取事务 mutex，不接触用户地址。正常返回与 IRQ count 的增量共同证明 Linux
+handler 已执行；逐命令日志使用 `dev_dbg()`，避免并发测试刷屏。
 
-`SEC_IOC_GET_IRQ_COUNT` 返回 handler 已处理的累计中断次数。它用于测试中断前后 count
-是否恰好增加 1，只提供当前计数快照，不是阻塞式事件通知接口。当前 driver 没有实现
-`poll`、`epoll`、异步 `read`、`eventfd` 或 `SIGIO`；如果实验需要命令下发后继续执行其他
-userspace 工作，应增加 wait queue 和 `.poll`，而不是循环查询 IRQ count。
+等待超过 1 秒返回 `ETIMEDOUT`，并复位 VF；DMA ERROR 返回 `EIO`。复位先撤销硬件 IRQ，
+再用 `synchronize_irq()` 等待正在运行的 handler，清 completion 和 buffer，避免下一任
+使用方消费旧状态。该复位方式依赖当前 QEMU 同步 DMA 模型；若后续加入后台 worker，必须
+补充停止/排空 DMA 的协议。
 
-## Userspace ABI
+## 验证
 
-Linux driver 使用 DT compatible `syslab,sec` 匹配 platform device，并通过
-miscdevice 框架创建 `/dev/sec` 字符设备。userspace ABI 定义在
-`linux/include/uapi/linux/sec.h`：
-
-| Operation | Buffer or command | Behavior |
-| --- | --- | --- |
-| `open` | `/dev/sec`，读写模式 | 打开设备 |
-| `write` | `struct sec_operands`，两个 U32 | 执行 XOR，等待对应 IRQ handler 后返回 |
-| `read` | 一个 U32 | 读取 `RESULT` |
-| `ioctl` | `SEC_IOC_CLEAR` | 写 `CMD=0`，清零 `RESULT` |
-| `ioctl` | `SEC_IOC_GET_IRQ_COUNT` | 获取 Linux driver 已处理的累计中断次数 |
-| `ioctl` | `SEC_IOC_DMA_COPY`、`struct sec_dma_copy` | 复制 1-64 bytes，返回 device 写入的 destination buffer |
-
-`SEC_IOC_DMA_COPY` 使用 driver 管理的两个 64-byte coherent buffer。driver 将 source
-payload 复制到第一个 buffer，把 `dma_alloc_coherent()` 返回的 `dma_addr_t` 写入 sec
-register，等待 IRQ 后再把第二个 buffer 返回 userspace。userspace 不直接提供 DMA address，
-因此首版不引入 user-page pinning、scatter-gather 和异步 buffer 生命周期。
-
-## Driver Verification
-
-在 repository root 构建并启动 mini-virt：
+host 构建、启动：
 
 ```sh
+./vm/verify.sh
 ./vm/aarch64/mini-virt/build-all.sh
 ./vm/aarch64/mini-virt/run.sh
 ```
 
-进入 BusyBox shell 后确认 driver 已完成 probe，并创建字符设备：
+guest 执行：
 
 ```sh
-dmesg | grep sec
-ls -l /dev/sec
+ls -l /dev/sec*
+./sec.bin
+./sec.bin --vf 2
+./sec.bin --all
+echo $?
+cat /proc/interrupts
 ```
 
-预期包含类似输出：
+`tests/Makefile` 使用 Linux `headers_install` 导出的 UAPI，以 `-Wall -Wextra -Werror`
+编译静态 AArch64 `/sec.bin`，`build-initrd.sh` 将它装入 initramfs。
+
+`--all` 覆盖四个 VF 的所有合法长度、XOR/clear、IRQ count、非法长度/命令、复位、重复
+open、dup 最后关闭、四进程并发及 SIGKILL 后重新打开。四个子进程先完成 open，再由父进程
+统一放行；每个运行 200 轮不同数据的 XOR/DMA，穿插本地复位，检查结果及准确 IRQ 增量。
+单独的复位隔离测试还逐次复位一个 VF，确认其余 VF 的结果和 IRQ count 不变。
+
+关键输出如下，进程完成顺序可以不同：
 
 ```text
-syslab-sec a000000.sec: sec XOR and DMA character device ready, src=... dst=...
-crw-------    1 0        0          10, ... /dev/sec
+VF reset isolation: PASS
+VF0 concurrent: 200 iterations, 400 IRQs PASS
+VF1 concurrent: 200 iterations, 400 IRQs PASS
+VF2 concurrent: 200 iterations, 400 IRQs PASS
+VF3 concurrent: 200 iterations, 400 IRQs PASS
+Four-process data/IRQ isolation: PASS
+VF0 killed owner/reopen: PASS
+...
+sec test: PASS
 ```
 
-`tests/Makefile` 会静态链接 driver 测试程序，`build-initrd.sh` 将其安装到
-initramfs 根目录。默认 shell 路径为 `/`，可以直接执行：
+故障验收需重新启动 guest：
 
 ```sh
-./sec.bin
+SEC_FAULT_TEST=1 ./vm/aarch64/mini-virt/run.sh
+```
+
+该环境变量使 kernel command line 带上 `sec.fault_test=1`。guest 执行：
+
+```sh
+./sec.bin --all --fault
 echo $?
 ```
 
-预期结果：
+正常启动时 fault ioctl 返回 `EOPNOTSUPP`。开启后，驱动仍要求 strict DMA domain；测试先
+创建临时 streaming mapping 并完成一次 copy，随后 `dma_unmap_single()` 撤销映射并完成
+IOTLB invalidation，再确认软件页表已没有该映射。驱动用旧 IOVA 发起 4-byte DMA，必须得到 ERROR，
+且 destination 的哨兵数据不得改变。用户态不指定测试地址。
 
-```text
-sec irq test: PASS (count 0 -> 1)
-sec dma test: PASS (SID 1, IRQ count 1 -> 2)
-sec test: PASS
-0
-```
+每个 VF 单独验证 fault 和恢复；并发阶段 VF0 再注入一次 fault，其 IRQ 增量为 402，其他
+VF 仍为 400。内核日志应出现 `unmapped IOVA ... rejected` 和 SMMU 的 `event 0x10`（`F_TRANSLATION`）
+事件，之后正常 DMA 必须继续通过。该测试同时检查实际 DMA fault enforcement 与旧映射
+失效，详见 [`smmu.md`](smmu.md)。
 
-`sec.bin` 会先读取 IRQ count，再通过 `write` 下发操作数和 CMD，并检查 IRQ count
-恰好增加 1，从而确认 Linux handler 实际处理了中断。随后程序检查 XOR 结果、清零结果，
-再执行 DMA copy 并确认 payload 和 IRQ count。程序返回 0 表示 PIO、DMA 和中断行为均通过。
+QEMU qtest 还直接验证了四个 MMIO 窗口的只读身份、保留地址、pending/W1C、非法 DMA
+长度、单 VF 复位隔离和整机复位；记录位于 `qemu/build/sec-vf-mmio.log`。
 
-还可以检查 handler 日志和 GIC 计数：
-
-```sh
-dmesg | grep '\[sec-irq\]'
-cat /proc/interrupts | grep a000000.sec
-```
-
-预期日志包含：
-
-```text
-[sec-irq]: result=0xb791a987
-[sec-irq]: dma status=0x00000001
-```
-
-`/proc/interrupts` 预期包含类似输出：
-
-```text
-17:          2          0     GICv3  34 Level     a000000.sec
-```
-
-第一列 `14` 是动态分配的 Linux virtual IRQ，`34` 是 GIC INTID，`Level` 是触发类型，
-CPU count 是 handler 已处理的中断次数。每次 `sec.bin` 执行一次 PIO XOR 和一次 DMA copy，
-因此 count 应增加 2。
-
-验证结束后关闭 guest：
-
-```sh
-poweroff
-```
+本次正常模式和 fault 模式均通过，均返回 0 并正常关机。完整运行日志保存在本地构建目录
+`qemu/build/sec-vf-normal.log`、`qemu/build/sec-vf-fault.log`，构建目录清理后需重新验证。

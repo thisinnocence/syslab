@@ -13,40 +13,18 @@ RTL simulation、FPGA prototype 或 silicon validation。
 ## SoC Topology
 
 ```text
-                         mini-virt SoC
-
-  +------------------+       PPI        +----------------------+
-  | Cortex-A57 CPU 0 |----------------->|                      |
-  +------------------+                  |                      |
-                                        |       GICv3          |----> CPU IRQ
-  +------------------+       PPI        | Distributor +       |
-  | Cortex-A57 CPU 1 |----------------->| Redistributors       |
-  +------------------+                  |                      |
-           |                            +----------^-----------+
-           |                                       |
-           | system memory                         | SPI
-           v                                       |
-  +------------------+       +---------------------+--------------------+
-  | 4 GiB RAM        |       |                                          |
-  | @ 0x40000000     |       | SPI 1 / INTID 33     SPI 2 / INTID 34   |
-  +------------------+       v                                          v
-                      +------------------+                    +------------------+
-                      | ARM PL011 UART   |                    | sec accelerator  |
-                      | @ 0x09000000     |                    | @ 0x0a000000     |
-                      +------------------+                    +------------------+
-                               |                                      |
-                               v                                      v
-                         ttyAMA0 console                    /dev/sec + sec.bin
-                                                                      |
-                                                                      | SID 1 DMA
-                                                                      v
-                                                            +------------------+
-                                                            | SMMUv3 Stage 1   |
-                                                            | @ 0x0b000000     |
-                                                            +--------+---------+
-                                                                     |
-                                                                     v
-                                                                    RAM
+Cortex-A57 CPU0/CPU1 ── architectural timer PPI ──> GICv3 ──> CPU IRQ
+        |
+        +── RAM @ 0x40000000，4 GiB
+        +── PL011 @ 0x09000000 ── SPI 1 ──> GICv3
+        +── SEC VF0..VF3 @ 0x0a000000，每 VF 4 KB ── SPI 8..11 ──> GICv3
+                   |                           |
+              /dev/sec0..3               SID 1..4 DMA
+                                               |
+                                        SMMUv3 Stage 1
+                                        @ 0x0b000000
+                                               |
+                                              RAM
 ```
 
 architectural timer 是每个 CPU 的 architecture-defined timer，通过 PPI 接入 GICv3。
@@ -60,8 +38,8 @@ direct boot 负责装载 kernel、DTB 和 initramfs，不依赖一套完整的 b
 | GICv3 distributor | `0x08000000-0x0800ffff` | SPI distribution |
 | GICv3 redistributor | 从 `0x080a0000` 开始 | per-CPU interrupt state |
 | PL011 | `0x09000000-0x09000fff` | SPI 1，INTID 33，`ttyAMA0` |
-| sec | `0x0a000000-0x0a0003ff` | SPI 2，INTID 34，level-high |
-| SMMUv3 | `0x0b000000-0x0b01ffff` | SPI 3-6，Stage 1，sec SID 1 |
+| SEC VF0–VF3 | `0x0a000000-0x0a003fff` | SPI 8–11，INTID 40–43，level-high |
+| SMMUv3 | `0x0b000000-0x0b01ffff` | SPI 3-6，Stage 1，SEC SID 1–4 |
 | RAM | `0x40000000-0x13fffffff` | 4 GiB guest memory |
 
 ## Evolution
@@ -153,7 +131,7 @@ command 交叉写入。userspace 不直接依赖 physical address 和 register o
 
 ### 5. Upgrade Polling to an Interrupt-Driven Device
 
-最后一步给 sec 加入 SPI 2 level-high interrupt，并新增 `IRQ_STATUS.bit0`：
+该阶段给 sec 加入 SPI 2 level-high interrupt，并新增 `IRQ_STATUS.bit0`：
 
 ```text
 CMD=1
@@ -199,9 +177,25 @@ QEMU 原有 SMMUv3 model 增加显式 SID 的 system-bus frontend；ARM `virt` �
 同一套 architected SMMUv3 register、queue、translation、IOTLB 和 fault model，不复制
 一个只适用于实验的简化 SMMU。
 
-当前最小范围只验证正常 Stage 1 coherent DMA copy。PCIe、ITS/MSI、ATS/PRI、SVA、Stage 2、
+这一历史阶段只验证正常 Stage 1 coherent DMA copy。PCIe、ITS/MSI、ATS/PRI、SVA、Stage 2、
 nested translation 和 fault injection 均不进入这一阶段。完整 contract 和验证证据见
 [`smmu.md`](smmu.md)。
+
+### 7. Partition SEC into Independent VFs
+
+当前版本将一个 SEC 的状态拆成四份：每个 VF 独占 MMIO 窗口、IRQ 和固定 SID，分别由
+一个 Linux platform device 管理。板级 IRQ 调整为 SPI 8–11，原 `/dev/sec` 改成
+`/dev/sec0`–`/dev/sec3`。前面第 3–6 阶段的单设备地址范围、SPI 2 和 SID 1 描述保留为
+演进记录，当前资源以本页顶部表格和 [`sec.md`](sec.md) 为准。
+
+业务进程通过独占 open 领取 VF，使用相同的 XOR/DMA ABI；最后 close 或异常退出后复位
+当前 VF，不影响其他 VF。每个 VF 使用自己的 Linux device 分配 DMA buffer，独立的
+DMA domain 使相同 IOVA 可以翻译到不同 PA。模型不需要新建 SMMU 翻译核心，只需为每个 VF
+注入对应 SID 的 AddressSpace。
+
+四进程并发测试检查 payload 和准确 IRQ 增量；受控 fault 测试先预热临时映射，再撤销它，
+验证旧 IOVA 被拒绝及后续 DMA 恢复。这一步完成同一 guest 内的多业务功能隔离，为后续
+硬件虚拟化保留边界，但尚未实现跨 VM 直通、Stage 2 或真实设备内部并行调度。
 
 ## Repository History
 
