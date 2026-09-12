@@ -32,6 +32,7 @@ EOF
 # /init 以普通 Shell 脚本维护，便于编辑器高亮和独立检查；打包时复制到
 # 生成的 initramfs 根目录
 install -m 0755 "${SCRIPT_DIR}/init.sh" "${ROOTFS_DIR}/init"
+install -m 0755 "${SCRIPT_DIR}/tests/psci.sh" "${ROOTFS_DIR}/psci.sh"
 
 # 通过 tests/Makefile 构建 sec driver 测试，再安装到 initramfs 根目录
 make -C "${SCRIPT_DIR}/tests" CROSS_COMPILE="${CROSS_COMPILE}" \

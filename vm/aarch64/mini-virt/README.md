@@ -74,3 +74,28 @@ guest 会在 `ttyAMA0` 上启动交互式 BusyBox shell
 host 使用 `SEC_FAULT_TEST=1 ./vm/aarch64/mini-virt/run.sh` 重新启动后，guest 执行
 `./sec.bin --all --fault`，进一步验证映射撤销后的旧 IOVA 被拒绝及 DMA 恢复。
 这是同一 guest 内的功能隔离实验；尚不包含跨 VM 直通、异步 DMA 或性能仿真。
+
+## PSCI 与 CPU hotplug
+
+本 profile 使用 TCG 内置 PSCI 1.1 仿真，conduit 为 SMC，无需 TF-A。
+CPU0 由 QEMU direct boot；CPU1 初始 powered-off，由 Linux `CPU_ON` 启动。
+DTS 的 CPU 节点使用 `enable-method = "psci"`；QEMU 在加载 DTB 时根据实际
+conduit 重建 `/psci`。内核启用 `CONFIG_ARM_PSCI_FW=y` 和 `CONFIG_HOTPLUG_CPU=y`。
+
+host 使用 `PSCI_TRACE=/tmp/mini-virt-psci.trace ./run.sh` 记录 PSCI 请求和
+`arm_powerctl_*` API；不设置该变量时不额外开启 trace。
+initramfs 包含 `/psci.sh`，在 guest 中执行会对 CPU1 做三轮 offline/online，
+检查 online/present 状态，最终恢复双核在线并输出 `psci test: PASS`。
+也可直接使用 `echo 0` / `echo 1` 写 `/sys/devices/system/cpu/cpu1/online`。
+测试保留 CPU0 在线；CPU offline 不删除 vCPU 对象，也不模拟物理电源时序。
+
+验收时结合启动日志中的 CPU0/CPU1、`CPU1 killed`、guest 测试结果和 host trace，
+确认 CPU_ON、CPU_OFF、AFFINITY_INFO 均被调用。随后运行 `/sec.bin --all` 验证
+现有 SEC/SMMU 链路，执行 `poweroff -f` 验证 SYSTEM_OFF 和 QEMU 正常退出。
+原理、核心 API、关键调用链和完整操作见 [`docs/psci.md`](../../../docs/psci.md)。
+
+QEMU 构建固定使用 `--enable-debug`（`-O0 -g`），便于获取 host GDB 调用栈。
+已有 build 若配置不同，按 configure-time 变更约定只清空 `qemu/build` 后重建。
+PSCI trace 还包含 reset、firmware reset、PSCI 返回值、CPU_OFF 入队及上下电完成状态。
+原始 GDB `bt`、状态快照和完整 trace 已收录于 `docs/psci.md`；可从 repository
+root 使用 `tests/psci.gdb` 配合该文档的 GDB 命令重新采集。
