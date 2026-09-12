@@ -14,10 +14,21 @@ for build_dir in qemu linux busybox; do
         "${REPO_ROOT}/${build_dir}/build"
 done
 
+# PSCI_TRACE 指定 host trace 文件，记录 SMC 分发及 CPU 电源控制 API.
+trace_args=()
+if [[ -n "${PSCI_TRACE:-}" ]]; then
+    trace_args=(-trace 'enable=arm_psci_*'
+                -trace 'enable=arm_powerctl_*'
+                -trace enable=arm_cpu_reset
+                -trace enable=arm_emulate_firmware_reset
+                -trace "file=${PSCI_TRACE}")
+fi
+
 # exec 以 QEMU 替换当前 shell，使终端信号直接传递给 QEMU，并保留其退出码
 # - rdinit=/init 指定 initramfs 内作为 PID 1 执行的程序
 # - panic=-1 使 kernel panic 后不自动重启，以便保留现场调试
 exec "${QEMU_BIN}" \
+    "${trace_args[@]}" \
     -machine mini-virt \
     -smp 2 \
     -m 4G \

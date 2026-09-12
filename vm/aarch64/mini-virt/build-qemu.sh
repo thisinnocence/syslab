@@ -19,6 +19,7 @@ if [[ ! -f "${QEMU_BUILD}/build.ninja" ]]; then
         cd "${QEMU_BUILD}"
         "${QEMU_SRC}/configure" \
             --target-list=aarch64-softmmu \
+            --enable-debug \
             --disable-docs \
             --disable-gtk \
             --disable-sdl
